@@ -1,0 +1,18 @@
+[MASTER]
+extension-pkg-whitelist=pydantic
+
+[MESSAGES CONTROL]
+# Disable false positives and intentional design choices:
+# E1101: Pydantic false positives with pydantic-settings
+# C0103: Private module-level constants (_settings, _client)
+# W0603: Global statements used intentionally for singletons
+# W0718: Broad exception caught is intentional for error handlers
+# R0801: Duplicate code between tests and main code is acceptable
+disable=E1101,C0103,W0603,W0718,R0801
+
+[FORMAT]
+max-line-length=100
+
+[DESIGN]
+max-args=10
+max-locals=20

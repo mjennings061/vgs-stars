@@ -6,6 +6,12 @@ repos:
 
 - repo: local
   hooks:
+    - id: isort
+      name: isort
+      entry: poetry run isort
+      language: system
+      files: \.py$
+
     - id: black
       name: black
       entry: poetry run black
@@ -18,14 +24,10 @@ repos:
       language: system
       files: \.ipynb$
 
-    - id: isort
-      name: isort
-      entry: poetry run isort
-      language: system
-      files: \.py$
-
     - id: pylint
       name: pylint
       entry: poetry run pylint
       language: system
       files: \.py$
+      args:
+        - --max-line-length=88
