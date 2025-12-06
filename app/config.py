@@ -13,7 +13,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class StarsConfig(BaseSettings):
     """STARS API configuration settings."""
 
-    model_config = SettingsConfigDict(env_prefix="STARS_")
+    model_config = SettingsConfigDict(
+        env_prefix="STARS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     uri: str = Field(..., description="STARS API base URI")
     api_key: str = Field(..., description="STARS API authentication key")
@@ -23,7 +28,12 @@ class StarsConfig(BaseSettings):
 class MongoConfig(BaseSettings):
     """MongoDB configuration settings."""
 
-    model_config = SettingsConfigDict(env_prefix="MONGO_")
+    model_config = SettingsConfigDict(
+        env_prefix="MONGO_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     uri: str = Field(..., description="MongoDB connection URI")
     db_name: str = Field(default="stars", description="Database name")
@@ -46,7 +56,12 @@ class MongoConfig(BaseSettings):
 class EmailConfig(BaseSettings):
     """Email service configuration settings."""
 
-    model_config = SettingsConfigDict(env_prefix="SENDGRID_")
+    model_config = SettingsConfigDict(
+        env_prefix="SENDGRID_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     api_key: str = Field(..., description="SendGrid API key")
     from_email: str = Field(..., description="Sender email address")
@@ -55,6 +70,12 @@ class EmailConfig(BaseSettings):
 
 class AppConfig(BaseSettings):
     """General application configuration settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     expiry_warning_days: int = Field(
         default=30,

@@ -51,11 +51,21 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger documen
 
 ## API Endpoints
 
-- `GET /health` - Health check
-- `GET /health/ready` - Readiness check (verifies DB and STARS API connectivity)
-- `POST /auths/notify-auth-expiry` - Check for expiring auths and send notifications
-- `GET /auths/expiring` - List expiring auths without sending emails
-- `POST /auths/test-email` - Send a test notification email
+### Health
+
+- `GET /health` - Basic liveness check (returns status and timestamp)
+- `GET /health/ready` - Readiness check (verifies MongoDB and STARS API connectivity)
+
+### Authorisations
+
+- `POST /auths/notify-auth-expiry` - Check for expiring auths and send email notifications
+  - Optional body: `{"unit_id": "string", "warning_days": int}`
+  - Returns counts of sent/failed notifications and summary
+- `GET /auths/expiring` - List expiring auths without sending notifications (for debugging)
+  - Query params: `unit_id` (optional), `warning_days` (optional)
+  - Returns list of expiring authorisations
+- `POST /auths/test-email` - Send a test notification email (for debugging)
+  - Body: `{"email": "test@example.com", "resource_id": "string"}`
 
 ## Testing
 
