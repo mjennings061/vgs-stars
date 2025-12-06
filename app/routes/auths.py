@@ -46,6 +46,14 @@ class NotifyAuthExpiryResponse(BaseModel):
     errors: list[str]
 
 
+class NotifySingleAuthExpiryRequest(NotifyAuthExpiryRequest):
+    """Request body for single-user notify-auth-expiry endpoint."""
+
+    resource_id: str = Field(
+        description="Resource ID of the user to notify (e.g., 'R:XXXXX')"
+    )
+
+
 @router.post("/notify-auth-expiry", response_model=NotifyAuthExpiryResponse)
 async def notify_auth_expiry(
     request: NotifyAuthExpiryRequest = NotifyAuthExpiryRequest(),
@@ -87,6 +95,55 @@ async def notify_auth_expiry(
             status_code=500,
             detail=(
                 f"Failed to process authorisation expiry " f"notifications: {str(e)}"
+            ),
+        ) from e
+
+
+@router.post("/notify-auth-expiry/user", response_model=NotifyAuthExpiryResponse)
+async def notify_auth_expiry_for_user(
+    request: NotifySingleAuthExpiryRequest,
+) -> NotifyAuthExpiryResponse:
+    """Send expiry notifications for a single user (RPC pattern).
+
+    This endpoint skips deduplication and does not persist notification batches.
+
+    Args:
+        request: Resource ID plus optional parameters (unit_id, warning_days).
+
+    Returns:
+        Detailed results including counts and any errors.
+
+    Raises:
+        HTTPException: If the operation fails completely.
+    """
+    logger.info(
+        (
+            "Received single-user notify-auth-expiry request: "
+            "resource_id=%s, unit_id=%s, warning_days=%s"
+        ),
+        request.resource_id,
+        request.unit_id,
+        request.warning_days,
+    )
+
+    try:
+        result = notification_service.notify_expiring_auths_for_resource(
+            resource_id=request.resource_id,
+            unit_id=request.unit_id,
+            warning_days=request.warning_days,
+        )
+
+        return NotifyAuthExpiryResponse(**result)
+
+    except Exception as e:
+        logger.error(
+            "Fatal error in single-user notify-auth-expiry: %s", e, exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to process authorisation expiry notification for",
+                f"{request.resource_id}: {str(e)}",
             ),
         ) from e
 

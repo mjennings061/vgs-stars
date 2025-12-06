@@ -27,9 +27,11 @@ class Person(BaseModel):
 
     id: str
     name: str
-    first_name: str = Field(alias="firstName")
-    last_name: str = Field(alias="lastName")
-    display_name: str = Field(alias="displayName")
+    # Some STARS records omit these fields, so keep them optional to avoid
+    # validation failures.
+    first_name: str | None = Field(default=None, alias="firstName")
+    last_name: str | None = Field(default=None, alias="lastName")
+    display_name: str | None = Field(default=None, alias="displayName")
     user_id: str = Field(alias="userId")
     resource_type_id: str = Field(alias="resourceTypeId")
     resource_type: str = Field(alias="resourceType")

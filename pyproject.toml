@@ -41,3 +41,8 @@ target-version = ['py313']
 profile = "black"
 line_length = 88
 
+[tool.pylint.main]
+py-version = "3.13"
+
+[tool.pylint.format]
+max-line-length = 88

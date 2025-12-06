@@ -61,6 +61,10 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger documen
 - `POST /auths/notify-auth-expiry` - Check for expiring auths and send email notifications
   - Optional body: `{"unit_id": "string", "warning_days": int}`
   - Returns counts of sent/failed notifications and summary
+- `POST /auths/notify-auth-expiry/user` - Send expiry notification for a single user
+  - Body: `{"resource_id": "R:XXXXX", "unit_id": "string", "warning_days": int}`
+  - Returns counts of sent/failed notifications and summary
+  - Does not deduplicate or persist notifications; intended for ad-hoc sends
 - `GET /auths/expiring` - List expiring auths without sending notifications (for debugging)
   - Query params: `unit_id` (optional), `warning_days` (optional)
   - Returns list of expiring authorisations
@@ -83,6 +87,14 @@ Trigger a notification check:
 curl -X POST http://localhost:8000/auths/notify-auth-expiry \
   -H "Content-Type: application/json" \
   -d '{"unit_id": "206749", "warning_days": 30}'
+```
+
+Trigger a single-user notification check:
+
+```bash
+curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
+  -H "Content-Type: application/json" \
+  -d '{"resource_id": "R:XXXXX", "warning_days": 30}'
 ```
 
 ## External Scheduling

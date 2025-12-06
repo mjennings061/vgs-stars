@@ -29,3 +29,5 @@ repos:
       entry: poetry run pylint
       language: system
       files: \.py$
+      args:
+        - --max-line-length=88

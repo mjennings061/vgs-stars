@@ -71,7 +71,10 @@ async def lifespan(fastapi_app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="STARS Authorisation Expiry Notifications",
-    description="API for checking and notifying about expiring STARS engineering authorisations",
+    description=(
+        "API for checking and notifying about expiring STARS engineering "
+        "authorisations"
+    ),
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -127,6 +130,7 @@ async def root():
             "health": "/health",
             "readiness": "/health/ready",
             "notify_expiry": "POST /auths/notify-auth-expiry",
+            "notify_expiry_single": "POST /auths/notify-auth-expiry/user",
             "list_expiring": "GET /auths/expiring",
             "test_email": "POST /auths/test-email",
             "docs": "/docs",

@@ -115,6 +115,15 @@ class Settings(BaseSettings):
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
+        # Quiet noisy third-party loggers
+        for noisy_logger in (
+            "pymongo",
+            "pymongo.ocsp_support",
+            "pymongo.pool",
+            "pymongo.topology",
+        ):
+            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
 
 # Global settings instance
 _settings: Settings | None = None

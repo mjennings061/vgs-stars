@@ -277,3 +277,128 @@ def check_and_notify_expiring_auths(
             },
             "errors": [str(e)],
         }
+
+
+def notify_expiring_auths_for_resource(
+    resource_id: str, unit_id: str | None = None, warning_days: int | None = None
+) -> dict:
+    """Send expiring authorisation notifications for a single resource.
+
+    This endpoint intentionally skips deduplication and persistence; it simply
+    checks the user's expiring auths and attempts to send one email.
+
+    Args:
+        resource_id: STARS resource ID for the person (e.g., "R:125129").
+        unit_id: Optional organisation unit ID (defaults to config).
+        warning_days: Days before expiry to warn (defaults to config).
+
+    Returns:
+        Dictionary with results summary including counts and errors.
+    """
+    settings = get_settings()
+
+    if unit_id is None:
+        unit_id = settings.stars.org_unit_id
+    if warning_days is None:
+        warning_days = settings.app.expiry_warning_days
+
+    expiry_date = date.today() + timedelta(days=warning_days)
+    target_org_unit_id = str(unit_id) if unit_id is not None else None
+
+    logger.info(
+        "Checking expiring auths for %s before %s (unit %s)",
+        resource_id,
+        expiry_date,
+        unit_id,
+    )
+
+    try:
+        # Fetch current auths for the user and filter by expiry threshold
+        user_auths = stars_client.get_eng_auths_for_user(resource_id)
+        expiring_auths = [
+            auth
+            for auth in user_auths
+            if auth.expiry
+            and auth.expiry <= expiry_date
+            and (
+                target_org_unit_id is None
+                or str(auth.org_unit_id) == str(target_org_unit_id)
+            )
+        ]
+
+        if not expiring_auths:
+            logger.info("No expiring authorisations found for %s", resource_id)
+            return {
+                "success": True,
+                "notifications_sent": 0,
+                "notifications_failed": 0,
+                "summary": {
+                    "total_expiring_auths": 0,
+                    "users_notified": 0,
+                    "emails_sent": 0,
+                },
+                "errors": [],
+            }
+
+        user = stars_client.get_user_from_resource(resource_id)
+
+        today = date.today()
+        has_expired = any(
+            auth.expiry and auth.expiry < today for auth in expiring_auths
+        )
+        notification_type = (
+            NotificationType.EXPIRED if has_expired else NotificationType.EXPIRING_SOON
+        )
+
+        # Create notification batch
+        batch = create_notification_batch(
+            resource_id, expiring_auths, user, notification_type
+        )
+
+        notifications_sent = 0
+        notifications_failed = 0
+        errors: list[str] = []
+
+        # Send email
+        try:
+            email_service.send_notification_email(batch)
+            batch.status = NotificationStatus.SENT
+            batch.sent_at = datetime.now()
+            notifications_sent = 1
+            logger.info("Notification sent to %s for %s", user.email, resource_id)
+        except Exception as e:
+            batch.status = NotificationStatus.FAILED
+            batch.error = str(e)
+            notifications_failed = 1
+            errors.append(f"Failed to send email to {user.email}: {e}")
+            logger.error("Failed to send notification for %s: %s", resource_id, e)
+
+        # Intentionally skip database persistence for this ad-hoc endpoint
+
+        return {
+            "success": True,
+            "notifications_sent": notifications_sent,
+            "notifications_failed": notifications_failed,
+            "summary": {
+                "total_expiring_auths": len(expiring_auths),
+                "users_notified": 1,
+                "emails_sent": notifications_sent,
+            },
+            "errors": errors,
+        }
+
+    except Exception as e:
+        logger.error(
+            "Fatal error in single-user notification check: %s", e, exc_info=True
+        )
+        return {
+            "success": False,
+            "notifications_sent": 0,
+            "notifications_failed": 0,
+            "summary": {
+                "total_expiring_auths": 0,
+                "users_notified": 0,
+                "emails_sent": 0,
+            },
+            "errors": [str(e)],
+        }
