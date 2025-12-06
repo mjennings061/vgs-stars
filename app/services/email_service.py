@@ -60,11 +60,11 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
         [
             "-" * 60,
             "",
-            "Please log in to STARS to renew or update your authorisations.",
+            "Please renew your authorisations via your QESO.",
             "",
-            "If you have any questions, please contact your unit engineering officer.",
+            "This is an automated notification from the 661 VGS STARS system.",
             "",
-            "This is an automated notification from the STARS system.",
+            "https://github.com/mjennings061/vgs-stars",
         ]
     )
 
@@ -119,14 +119,17 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
         html_lines.append(f"<td>{expiry_str}</td>")
         html_lines.append("</tr>")
 
+    footer_text = (
+        '<p class="footer">This is an automated notification from the '
+        '<a href="https://github.com/mjennings061/vgs-stars">'
+        "661 VGS STARS system</a>.</p>"
+    )
+
     html_lines.extend(
         [
             "</table>",
-            "<p>Please log in to STARS to renew or update your authorisations.</p>",
-            '<div class="footer">',
-            "<p>If you have any questions, please contact your unit engineering officer.</p>",
-            "<p><em>This is an automated notification from the STARS system.</em></p>",
-            "</div>",
+            "<p>Please renew your authorisations via your QESO.</p>",
+            footer_text,
             "</body>",
             "</html>",
         ]
