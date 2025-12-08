@@ -101,11 +101,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         exc_info=True,
     )
 
+    # Never expose internal error details to clients in production
+    # Full error details are logged above for debugging
     return JSONResponse(
         status_code=500,
         content={
-            "detail": "Internal server error",
-            "error": str(exc),
+            "detail": "Internal server error.",
         },
     )
 
