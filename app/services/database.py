@@ -67,6 +67,7 @@ def ensure_indexes() -> None:
     - auths_notification: (authId, userId, sentAt) for deduplication
     - auth_notification_batches: (userId, sentAt) for user history
     - expiring_auths: (resourceId) for resource lookup
+    - users: (api_key) for fast API key lookup
     """
     settings = get_settings()
     db = get_database()
@@ -92,6 +93,14 @@ def ensure_indexes() -> None:
     expiring_col.create_index(
         [("resourceId", ASCENDING)],
         name="resource_idx",
+    )
+
+    # Users collection indexes (hashed API key)
+    users_col = db[settings.mongo.users_collection]
+    users_col.create_index(
+        [("api_key", ASCENDING)],
+        name="api_key_unique",
+        unique=True,
     )
 
     logger.info("Database indexes created successfully")

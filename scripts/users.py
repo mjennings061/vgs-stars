@@ -1,12 +1,25 @@
 """CLI to create users with hashed API keys in MongoDB."""
 
 import secrets
+import sys
+from pathlib import Path
 
 import click
 
-from app.config import get_settings
-from app.models.user import ApiUser
-from app.services import api_keys, database
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.config import (  # noqa: E402  # pylint: disable=wrong-import-position
+    get_settings,
+)
+from app.models.user import (  # noqa: E402  # pylint: disable=wrong-import-position
+    ApiUser,
+)
+from app.services import (  # noqa: E402  # pylint: disable=wrong-import-position
+    api_keys,
+    database,
+)
 
 
 @click.command()
@@ -32,8 +45,13 @@ def create_user(name: str) -> None:
 
     action = "updated" if result.matched_count else "created"
     click.echo(
-        f"\nUser {action}. Store this API key securely; it will not be shown again.\n"
+        f"\nUser {action}. Store this API key securely; "
+        "it will not be shown again.\n"
     )
     click.echo(f"User   : {name}")
     click.echo(f"Header : {settings.app.api_key_header_name}")
     click.echo(f"API key: {key_plain}\n")
+
+
+if __name__ == "__main__":
+    create_user()  # pylint: disable=no-value-for-parameter
