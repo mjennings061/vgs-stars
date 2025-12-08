@@ -105,3 +105,23 @@ The API is designed to be triggered externally. Example schedulers:
 - **Azure Logic Apps** - Recurrence trigger calling the API
 - **AWS EventBridge + Lambda** - Scheduled Lambda invokes the API
 - **Cron job** - `curl` command in crontab
+
+## Managing Users
+
+All endpoints except `/health` require an API key stored in MongoDB. Keys live in the `users` collection with fields `name` and `api_key` (hashed). To create one:
+
+1) Ensure your `.env` has Mongo settings loaded, then install deps: `poetry install`.
+2) Run the helper and follow the prompt:
+
+   ```bash
+   poetry run python scripts/users.py --name "661VGS"
+   ```
+
+3) Copy the printed API key once; the database stores only the SHA-256 hash in `api_key`.
+4) Call the API with the header shown (defaults to `X-API-Key`):
+
+   ```bash
+   curl -H "X-API-Key: <your key>" http://localhost:8000/auths/expiring
+   ```
+
+To revoke, remove the user document from `users` or replace the stored hash.

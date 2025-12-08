@@ -51,6 +51,10 @@ class MongoConfig(BaseSettings):
         default="auth_notification_batches",
         description="Collection for batched notifications",
     )
+    users_collection: str = Field(
+        default="users",
+        description="Collection for API users and hashed API keys",
+    )
 
 
 class EmailConfig(BaseSettings):
@@ -84,6 +88,10 @@ class AppConfig(BaseSettings):
     log_level: str = Field(
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    api_key_header_name: str = Field(
+        default="X-API-Key",
+        description="HTTP header name used to pass the API key",
     )
 
 

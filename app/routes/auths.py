@@ -6,7 +6,7 @@ Provides RPC-style endpoints for checking and notifying about expiring authorisa
 import logging
 from datetime import date, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -16,11 +16,16 @@ from app.models.notifications import (
     NotificationStatus,
     NotificationType,
 )
+from app.security import verify_api_key
 from app.services import email_service, notification_service, stars_client
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auths", tags=["authorisations"])
+router = APIRouter(
+    prefix="/auths",
+    tags=["authorisations"],
+    dependencies=[Depends(verify_api_key)],
+)
 
 
 class NotifyAuthExpiryRequest(BaseModel):

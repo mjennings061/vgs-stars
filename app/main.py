@@ -7,11 +7,12 @@ Scheduling is handled externally via cloud scheduler, cron, or similar.
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.routes import auths, health
+from app.security import verify_api_key
 from app.services import database
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ app.include_router(auths.router)
 
 # Root endpoint
 @app.get("/")
-async def root():
+async def root(_: dict = Depends(verify_api_key)):
     """Root endpoint with API information.
 
     Returns:

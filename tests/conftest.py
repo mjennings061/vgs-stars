@@ -38,4 +38,6 @@ def setup_test_env():
 def test_client():
     """Create a test client for the FastAPI application."""
 
-    return TestClient(app)
+    client = TestClient(app)
+
+    return client
