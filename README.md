@@ -97,6 +97,37 @@ curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
   -d '{"resource_id": "R:XXXXX", "warning_days": 30}'
 ```
 
+## Deployment to Google Cloud Run
+
+### Build and Deploy
+
+1. **Generate requirements.txt** (required for Cloud Run buildpacks):
+
+   ```bash
+   poetry export -f requirements.txt -o requirements.txt --without-hashes
+   ```
+
+2. **Deploy to Cloud Run**:
+
+   ```bash
+   gcloud run deploy vgs-stars-api \
+     --source . \
+     --region europe-west2 \
+     --platform managed \
+     --allow-unauthenticated \
+     --memory 512Mi \
+     --cpu 1 \
+     --timeout 300 \
+     --min-instances 0 \
+     --max-instances 1 \
+     --concurrency 80 \
+     --cpu-throttling \
+     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,MONGO_DB_NAME=stars" \
+     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,MONGO_URI=mongo-uri:latest,SENDGRID_API_KEY=sendgrid-api-key:latest,SENDGRID_FROM_EMAIL=sendgrid-from-email:latest"
+   ```
+
+**Note:** `requirements.txt` is generated from `poetry.lock` and should not be committed to git. The Cloud Run buildpack needs this file to detect dependencies.
+
 ## External Scheduling
 
 The API is designed to be triggered externally. Example schedulers:
