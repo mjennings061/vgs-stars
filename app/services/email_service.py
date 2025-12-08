@@ -7,12 +7,17 @@ with HTML and plain text templates.
 import logging
 
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Content, Email, Mail, To
+from sendgrid.helpers.mail import Asm, Content, Email, Mail, To
 
 from app.config import get_settings
 from app.models.notifications import NotificationBatch
 
 logger = logging.getLogger(__name__)
+
+
+UNSUBSCRIBE_GROUP_ID = 27661
+# Preference center raw URL (two-step unsubscribe to avoid bot clicks)
+ASM_PREFERENCES_URL_TAG = "<%asm_preferences_raw_url%>"
 
 
 class EmailServiceError(Exception):
@@ -63,6 +68,7 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
             "Please renew your authorisations via your QESO.",
             "",
             "This is an automated notification from the 661 VGS STARS system.",
+            f"Manage preferences: {ASM_PREFERENCES_URL_TAG}",
             "",
             "https://github.com/mjennings061/vgs-stars",
         ]
@@ -122,7 +128,9 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
     footer_text = (
         '<p class="footer">This is an automated notification from the '
         '<a href="https://github.com/mjennings061/vgs-stars">'
-        "661 VGS STARS system</a>.</p>"
+        "661 VGS STARS system</a>.<br>"
+        f'<a href="{ASM_PREFERENCES_URL_TAG}">Manage preferences</a>'
+        "</p>"
     )
 
     html_lines.extend(
@@ -176,6 +184,11 @@ def send_notification_email(batch: NotificationBatch) -> bool:
             subject=subject,
             plain_text_content=Content("text/plain", plain_text),
             html_content=Content("text/html", html_content),
+        )
+
+        # Use preferences page (two-step) to avoid auto-unsub from link scanners
+        mail.asm = Asm(
+            group_id=UNSUBSCRIBE_GROUP_ID, groups_to_display=[UNSUBSCRIBE_GROUP_ID]
         )
 
         # Send via SendGrid
