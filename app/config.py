@@ -39,10 +39,6 @@ class MongoConfig(BaseSettings):
     db_name: str = Field(default="stars", description="Database name")
 
     # Collection names
-    expiring_auths_collection: str = Field(
-        default="expiring_auths",
-        description="Collection for expiring auths",
-    )
     notifications_collection: str = Field(
         default="auths_notification",
         description="Collection for individual notifications",

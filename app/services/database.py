@@ -7,13 +7,12 @@ on notification collections with proper indexing.
 import logging
 from typing import Any
 
-from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
 
 from app.config import get_settings
-from app.models.notifications import Notification, NotificationBatch, NotificationStatus
+from app.models.notifications import Notification, NotificationBatch
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,6 @@ def ensure_indexes() -> None:
     Creates indexes on:
     - auths_notification: (authId, userId, sentAt) for deduplication
     - auth_notification_batches: (userId, sentAt) for user history
-    - expiring_auths: (resourceId) for resource lookup
     - users: (api_key) for fast API key lookup
     """
     settings = get_settings()
@@ -88,13 +86,6 @@ def ensure_indexes() -> None:
         name="user_sent_idx",
     )
 
-    # Expiring auths collection indexes
-    expiring_col = db[settings.mongo.expiring_auths_collection]
-    expiring_col.create_index(
-        [("resourceId", ASCENDING)],
-        name="resource_idx",
-    )
-
     # Users collection indexes (hashed API key)
     users_col = db[settings.mongo.users_collection]
     users_col.create_index(
@@ -106,81 +97,52 @@ def ensure_indexes() -> None:
     logger.info("Database indexes created successfully")
 
 
-def save_notification(notification: Notification) -> str:
-    """Insert a notification document into MongoDB.
+def save_notification_with_batch(
+    batch: NotificationBatch, notifications: list[Notification]
+) -> tuple[str, list[str]]:
+    """Save notification batch and individual notifications atomically.
 
-    Args:
-        notification: Notification instance to save.
-
-    Returns:
-        Inserted document ID as string.
-    """
-    settings = get_settings()
-    col = get_collection(settings.mongo.notifications_collection)
-
-    doc = notification.model_dump(by_alias=True)
-    result = col.insert_one(doc)
-
-    logger.debug("Saved notification: %s", result.inserted_id)
-    return str(result.inserted_id)
-
-
-def save_notification_batch(batch: NotificationBatch) -> str:
-    """Insert a notification batch document into MongoDB.
+    Uses MongoDB transactions to ensure both batch and individual notifications
+    are saved together, maintaining consistency for deduplication.
 
     Args:
         batch: NotificationBatch instance to save.
+        notifications: List of individual Notification instances.
 
     Returns:
-        Inserted document ID as string.
+        Tuple of (batch_id, list of notification_ids).
+
+    Raises:
+        Exception: If transaction fails, all changes are rolled back.
     """
     settings = get_settings()
-    col = get_collection(settings.mongo.notification_batches_collection)
+    client = get_client()
 
-    doc = batch.model_dump(by_alias=True)
-    result = col.insert_one(doc)
+    batch_col = get_collection(settings.mongo.notification_batches_collection)
+    notif_col = get_collection(settings.mongo.notifications_collection)
 
-    logger.info(
-        "Saved notification batch for user %s: %s", batch.user_email, result.inserted_id
-    )
-    return str(result.inserted_id)
+    with client.start_session() as session:
+        with session.start_transaction():
+            # Save batch
+            batch_doc = batch.model_dump(by_alias=True)
+            batch_result = batch_col.insert_one(batch_doc, session=session)
 
+            # Save individual notifications
+            notif_ids = []
+            for notification in notifications:
+                notif_doc = notification.model_dump(by_alias=True)
+                notif_result = notif_col.insert_one(notif_doc, session=session)
+                notif_ids.append(str(notif_result.inserted_id))
 
-def get_pending_notifications() -> list[dict[str, Any]]:
-    """Query pending notifications from MongoDB.
+            logger.info(
+                "Saved notification batch for user %s with %d individual "
+                "notifications: %s",
+                batch.user_email,
+                len(notifications),
+                batch_result.inserted_id,
+            )
 
-    Returns:
-        List of pending notification documents.
-    """
-    settings = get_settings()
-    col = get_collection(settings.mongo.notifications_collection)
-
-    notifications = list(col.find({"status": NotificationStatus.PENDING.value}))
-    logger.debug("Found %d pending notifications", len(notifications))
-    return notifications
-
-
-def update_notification_status(
-    notification_id: str,
-    status: NotificationStatus,
-    error: str | None = None,
-) -> None:
-    """Update the status of a notification.
-
-    Args:
-        notification_id: MongoDB document ID.
-        status: New notification status.
-        error: Optional error message if status is FAILED.
-    """
-    settings = get_settings()
-    col = get_collection(settings.mongo.notifications_collection)
-
-    update_doc = {"status": status.value}
-    if error:
-        update_doc["error"] = error
-
-    col.update_one({"_id": ObjectId(notification_id)}, {"$set": update_doc})
-    logger.debug("Updated notification %s to %s", notification_id, status.value)
+            return str(batch_result.inserted_id), notif_ids
 
 
 def get_notifications_for_auth(auth_id: int) -> list[dict[str, Any]]:

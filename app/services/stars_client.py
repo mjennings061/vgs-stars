@@ -180,6 +180,7 @@ def get_expiring_auths_by_date(unit_id: str, expiry_date: date) -> list[Auth]:
         logger.warning("No expiring auths found for unit %s", unit_id)
         return []
 
+    # Unpack auths into the pydantic data format
     auths = [Auth(**auth) for auth in auths_data]
     logger.info("Retrieved %d expiring auths", len(auths))
     return auths
