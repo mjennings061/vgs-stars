@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from app.config import get_settings
 from app.models.notifications import (
     AuthSummary,
+    Notification,
     NotificationBatch,
     NotificationStatus,
     NotificationType,
@@ -99,12 +100,12 @@ def create_notification_batch(
     auth_count = len(auth_summaries)
     if notification_type == NotificationType.EXPIRING_SOON:
         subject = (
-            f"STARS Authorisations Expiring Soon - Action Required "
+            f"STARS Authorisations Expiring Soon - "
             f"({auth_count} auth{'s' if auth_count != 1 else ''})"
         )
     else:
         subject = (
-            f"STARS Authorisations Expired - Urgent Action Required "
+            f"STARS Authorisations Expired - "
             f"({auth_count} auth{'s' if auth_count != 1 else ''})"
         )
 
@@ -198,20 +199,69 @@ def _process_person_notification(
         resource_id, auths_to_notify, user, notification_type
     )
 
-    # Send email and update batch status
+    # Send email and save to database atomically
     try:
+        # Send the email first
         email_service.send_notification_email(batch)
+
+        # Only update status after successful send
         batch.status = NotificationStatus.SENT
         batch.sent_at = datetime.now()
         logger.info("Notification sent to %s", user.email)
-        database.save_notification_batch(batch)
+
+        # Create individual notification records for deduplication tracking
+        notifications = [
+            Notification(
+                userId=batch.user_id,
+                userEmail=batch.user_email,
+                resourceId=batch.resource_id,
+                resourceName=batch.resource_name,
+                authId=auth_summary.auth_id,
+                mapId=auth_summary.map_id,
+                authName=auth_summary.auth_name,
+                expiryDate=auth_summary.expiry_date,
+                notificationType=batch.notification_type,
+                sentAt=batch.sent_at,
+                status=batch.status,
+            )
+            for auth_summary in batch.auths
+        ]
+
+        # Save batch and notifications atomically using transaction
+        database.save_notification_with_batch(batch, notifications)
+
         return True, None
     except Exception as e:
+        # If email send or database save fails, record the failure
         batch.status = NotificationStatus.FAILED
         batch.error = str(e)
+        batch.sent_at = datetime.now()
         error_msg = f"Failed to send email to {user.email}: {e}"
         logger.error("Failed to send notification: %s", e)
-        database.save_notification_batch(batch)
+
+        # Create individual notification records with FAILED status
+        notifications = [
+            Notification(
+                userId=batch.user_id,
+                userEmail=batch.user_email,
+                resourceId=batch.resource_id,
+                resourceName=batch.resource_name,
+                authId=auth_summary.auth_id,
+                mapId=auth_summary.map_id,
+                authName=auth_summary.auth_name,
+                expiryDate=auth_summary.expiry_date,
+                notificationType=batch.notification_type,
+                sentAt=batch.sent_at,
+                status=batch.status,
+                error=batch.error,
+            )
+            for auth_summary in batch.auths
+        ]
+
+        # Try to save failure record atomically
+        # If this fails too, let the exception propagate
+        database.save_notification_with_batch(batch, notifications)
+
         return False, error_msg
 
 
@@ -259,6 +309,11 @@ def check_and_notify_expiring_auths(
 
         # Group by person
         auths_by_person = group_auths_by_person(expiring_auths)
+        logger.info(
+            "Processing %d users with %d expired auths",
+            len(auths_by_person),
+            len(expiring_auths),
+        )
 
         notifications_sent = 0
         notifications_failed = 0

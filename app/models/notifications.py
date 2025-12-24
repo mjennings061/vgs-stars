@@ -7,7 +7,7 @@ including individual notifications and batched notifications for email sending.
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class NotificationType(str, Enum):
@@ -57,6 +57,11 @@ class Notification(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if failed")
 
+    @field_serializer("expiry_date")
+    def serialise_date_to_datetime(self, value: date) -> datetime:
+        """Convert date to datetime for MongoDB compatibility."""
+        return datetime.combine(value, datetime.min.time())
+
 
 class AuthSummary(BaseModel):
     """Summary of an authorisation for batched notifications."""
@@ -67,6 +72,11 @@ class AuthSummary(BaseModel):
     expiry_date: date = Field(alias="expiryDate")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_serializer("expiry_date")
+    def serialise_date_to_datetime(self, value: date) -> datetime:
+        """Convert date to datetime for MongoDB compatibility."""
+        return datetime.combine(value, datetime.min.time())
 
 
 class NotificationBatch(BaseModel):
@@ -100,26 +110,4 @@ class NotificationBatch(BaseModel):
     # Authorisations in this batch
     auths: list[AuthSummary] = Field(
         description="List of authorisations in this notification"
-    )
-
-
-class ExpiringAuth(BaseModel):
-    """Tracking document for expiring authorisations by resource.
-
-    Used to cache expiring authorisations for a resource/person.
-    """
-
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    resource_id: str = Field(
-        alias="resourceId", description="Resource ID (e.g., 'R:125129')"
-    )
-    auths: list[dict] = Field(description="List of expiring authorisation data")
-    last_checked: datetime = Field(
-        alias="lastChecked", description="When this was last checked"
-    )
-    next_check_date: date | None = Field(
-        default=None,
-        alias="nextCheckDate",
-        description="When to check again",
     )
