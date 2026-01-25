@@ -133,6 +133,7 @@ async def root(_: dict = Depends(verify_api_key)):
             "readiness": "/health/ready",
             "notify_expiry": "POST /auths/notify-auth-expiry",
             "notify_expiry_single": "POST /auths/notify-auth-expiry/user",
+            "send_notification": "POST /auths/send_notification",
             "list_expiring": "GET /auths/expiring",
             "test_email": "POST /auths/test-email",
             "docs": "/docs",

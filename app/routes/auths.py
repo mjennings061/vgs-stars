@@ -59,6 +59,12 @@ class NotifySingleAuthExpiryRequest(NotifyAuthExpiryRequest):
     )
 
 
+class SendNotificationRequest(BaseModel):
+    """Request body for send-notification endpoint."""
+
+    batch_id: str = Field(description="Notification batch ID to send")
+
+
 @router.post("/notify-auth-expiry", response_model=NotifyAuthExpiryResponse)
 async def notify_auth_expiry(
     request: NotifyAuthExpiryRequest = NotifyAuthExpiryRequest(),
@@ -68,8 +74,8 @@ async def notify_auth_expiry(
     This endpoint orchestrates the entire notification workflow:
     1. Fetches expiring auths from STARS API
     2. Groups them by person
-    3. Sends email notifications
-    4. Saves notification history to MongoDB
+    3. Creates notification batch records
+    4. Queues Cloud Tasks to send emails
 
     Args:
         request: Optional parameters (unit_id, warning_days).
@@ -101,6 +107,34 @@ async def notify_auth_expiry(
             detail=(
                 f"Failed to process authorisation expiry " f"notifications: {str(e)}"
             ),
+        ) from e
+
+
+@router.post("/send_notification")
+async def send_notification(request: SendNotificationRequest) -> dict:
+    """Send a queued notification batch by ID.
+
+    Args:
+        request: Payload containing the batch ID.
+
+    Returns:
+        Result payload describing the send outcome.
+    """
+    logger.info("Received send-notification request for batch %s", request.batch_id)
+
+    try:
+        # This endpoint is called by Cloud Tasks using the API key header.
+        result = notification_service.send_notification_batch(request.batch_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to send notification batch: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send notification batch: {str(e)}",
         ) from e
 
 

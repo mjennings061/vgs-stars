@@ -122,8 +122,8 @@ curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
      --max-instances 1 \
      --concurrency 80 \
      --cpu-throttling \
-     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,MONGO_DB_NAME=stars" \
-     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,MONGO_URI=mongo-uri:latest,SENDGRID_API_KEY=sendgrid-api-key:latest,SENDGRID_FROM_EMAIL=sendgrid-from-email:latest"
+     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,MONGO_DB_NAME=stars,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
+     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,MONGO_URI=mongo-uri:latest,SENDGRID_API_KEY=sendgrid-api-key:latest,SENDGRID_FROM_EMAIL=sendgrid-from-email:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
    ```
 
 **Note:** `requirements.txt` is generated from `poetry.lock` and should not be committed to git. The Cloud Run buildpack needs this file to detect dependencies.
