@@ -17,7 +17,7 @@ from app.models.notifications import (
     NotificationType,
 )
 from app.models.stars import Auth, User
-from app.services import database, email_service, stars_client
+from app.services import cloud_tasks, database, email_service, stars_client
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,10 @@ def _create_error_result(error: Exception) -> dict:
 
 
 def _process_person_notification(
-    resource_id: str, person_auths: list[Auth], unit_id: str
+    resource_id: str,
+    person_auths: list[Auth],
+    unit_id: str,
+    delay_seconds: int,
 ) -> tuple[bool, str | None]:
     """Process notification for a single person.
 
@@ -165,6 +168,7 @@ def _process_person_notification(
         resource_id: Resource ID for the person.
         person_auths: List of authorisations for this person.
         unit_id: Expected organisation unit ID.
+        delay_seconds: Delay in seconds before dispatching the Cloud Task.
 
     Returns:
         Tuple of (success, error_message).
@@ -194,74 +198,37 @@ def _process_person_notification(
         NotificationType.EXPIRED if has_expired else NotificationType.EXPIRING_SOON
     )
 
+    existing_batch = database.get_pending_batch_for_user(
+        user.id, notification_type=notification_type
+    )
+    if existing_batch:
+        # Skip if a batch is already queued for this user and type.
+        logger.info(
+            "Pending notification batch already exists for %s, skipping", user.email
+        )
+        return True, "pending_batch_exists"
+
     # Create notification batch
     batch = create_notification_batch(
         resource_id, auths_to_notify, user, notification_type
     )
 
-    # Send email and save to database atomically
+    # Persist the batch before queuing so the task can look it up.
+    batch_id = database.save_notification_batch(batch)
+
     try:
-        # Send the email first
-        email_service.send_notification_email(batch)
-
-        # Only update status after successful send
-        batch.status = NotificationStatus.SENT
-        batch.sent_at = datetime.now()
-        logger.info("Notification sent to %s", user.email)
-
-        # Create individual notification records for deduplication tracking
-        notifications = [
-            Notification(
-                userId=batch.user_id,
-                userEmail=batch.user_email,
-                resourceId=batch.resource_id,
-                resourceName=batch.resource_name,
-                authId=auth_summary.auth_id,
-                mapId=auth_summary.map_id,
-                authName=auth_summary.auth_name,
-                expiryDate=auth_summary.expiry_date,
-                notificationType=batch.notification_type,
-                sentAt=batch.sent_at,
-                status=batch.status,
-            )
-            for auth_summary in batch.auths
-        ]
-
-        # Save batch and notifications atomically using transaction
-        database.save_notification_with_batch(batch, notifications)
-
+        cloud_tasks.enqueue_send_notification(batch_id, delay_seconds)
+        logger.info("Queued notification batch %s for %s", batch_id, user.email)
         return True, None
     except Exception as e:
-        # If email send or database save fails, record the failure
-        batch.status = NotificationStatus.FAILED
-        batch.error = str(e)
-        batch.sent_at = datetime.now()
-        error_msg = f"Failed to send email to {user.email}: {e}"
-        logger.error("Failed to send notification: %s", e)
-
-        # Create individual notification records with FAILED status
-        notifications = [
-            Notification(
-                userId=batch.user_id,
-                userEmail=batch.user_email,
-                resourceId=batch.resource_id,
-                resourceName=batch.resource_name,
-                authId=auth_summary.auth_id,
-                mapId=auth_summary.map_id,
-                authName=auth_summary.auth_name,
-                expiryDate=auth_summary.expiry_date,
-                notificationType=batch.notification_type,
-                sentAt=batch.sent_at,
-                status=batch.status,
-                error=batch.error,
-            )
-            for auth_summary in batch.auths
-        ]
-
-        # Try to save failure record atomically
-        # If this fails too, let the exception propagate
-        database.save_notification_with_batch(batch, notifications)
-
+        error_msg = f"Failed to queue notification for {user.email}: {e}"
+        logger.error("Failed to queue notification: %s", e)
+        database.update_notification_batch(
+            batch_id=batch_id,
+            status=NotificationStatus.FAILED,
+            sent_at=datetime.now(),
+            error=str(e),
+        )
         return False, error_msg
 
 
@@ -274,8 +241,8 @@ def check_and_notify_expiring_auths(
     1. Fetch expiring auths from STARS API
     2. Group by person
     3. Check for deduplication
-    4. Send email notifications
-    5. Save to database
+    4. Create notification batch records
+    5. Queue Cloud Tasks to send emails
 
     Args:
         unit_id: Organisation unit ID (defaults to config).
@@ -318,16 +285,22 @@ def check_and_notify_expiring_auths(
         notifications_sent = 0
         notifications_failed = 0
         errors = []
+        queue_position = 0
 
         # Process each person
         for resource_id, person_auths in auths_by_person.items():
             try:
+                # Stagger tasks to reduce concurrent email sends.
+                delay_seconds = (
+                    queue_position * settings.cloud_tasks.dispatch_delay_seconds
+                )
                 success, error_msg = _process_person_notification(
-                    resource_id, person_auths, unit_id
+                    resource_id, person_auths, unit_id, delay_seconds
                 )
                 if success:
                     if error_msg is None:
                         notifications_sent += 1
+                        queue_position += 1
                 else:
                     notifications_failed += 1
                     if error_msg:
@@ -486,3 +459,82 @@ def notify_expiring_auths_for_resource(
             },
             "errors": [str(e)],
         }
+
+
+def send_notification_batch(batch_id: str) -> dict:
+    """Send a queued notification batch by ID.
+
+    Args:
+        batch_id: Notification batch ID to send.
+
+    Returns:
+        Result payload describing the send outcome.
+    """
+    batch_doc = database.get_notification_batch(batch_id)
+    if not batch_doc:
+        return {
+            "success": False,
+            "batch_id": batch_id,
+            "error": "Notification batch not found",
+        }
+
+    current_status = batch_doc.get("status")
+    if current_status == NotificationStatus.SENT.value:
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "status": current_status,
+            "message": "Notification already sent",
+        }
+
+    # Rehydrate the batch to reuse the existing email rendering logic.
+    batch_data = dict(batch_doc)
+    batch_data.pop("_id", None)
+    batch = NotificationBatch.model_validate(batch_data)
+
+    sent_at = datetime.now()
+    error: str | None = None
+    status = NotificationStatus.SENT
+
+    try:
+        email_service.send_notification_email(batch)
+        logger.info("Notification sent to %s", batch.user_email)
+    except Exception as e:
+        status = NotificationStatus.FAILED
+        error = str(e)
+        logger.error("Failed to send notification for batch %s: %s", batch_id, e)
+
+    notifications = [
+        Notification(
+            userId=batch.user_id,
+            userEmail=batch.user_email,
+            resourceId=batch.resource_id,
+            resourceName=batch.resource_name,
+            authId=auth_summary.auth_id,
+            mapId=auth_summary.map_id,
+            authName=auth_summary.auth_name,
+            expiryDate=auth_summary.expiry_date,
+            notificationType=batch.notification_type,
+            sentAt=sent_at,
+            status=status,
+            error=error,
+        )
+        for auth_summary in batch.auths
+    ]
+
+    database.finalise_notification_batch(
+        batch_id=batch_id,
+        status=status,
+        sent_at=sent_at,
+        error=error,
+        notifications=notifications,
+    )
+
+    if status == NotificationStatus.FAILED:
+        raise RuntimeError(f"Failed to send notification batch {batch_id}")
+
+    return {
+        "success": True,
+        "batch_id": batch_id,
+        "status": status.value,
+    }

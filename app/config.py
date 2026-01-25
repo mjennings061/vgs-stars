@@ -89,6 +89,30 @@ class AppConfig(BaseSettings):
         default="X-API-Key",
         description="HTTP header name used to pass the API key",
     )
+    cloud_tasks_queue_path: str = Field(
+        ...,
+        description="Cloud Tasks queue path (projects/.../locations/.../queues/...)",
+    )
+
+
+class CloudTasksConfig(BaseSettings):
+    """Google Cloud Tasks configuration settings."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CLOUD_TASKS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    target_url: str = Field(
+        ..., description="Full URL for the send-notification endpoint"
+    )
+    api_key: str = Field(..., description="API key to call protected endpoints")
+    dispatch_delay_seconds: int = Field(
+        default=10,
+        description="Delay between queued tasks in seconds",
+    )
 
 
 class Settings(BaseSettings):
@@ -102,10 +126,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    stars: StarsConfig = Field(default_factory=StarsConfig)
-    mongo: MongoConfig = Field(default_factory=MongoConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
-    app: AppConfig = Field(default_factory=AppConfig)
+    stars: StarsConfig = Field(default_factory=StarsConfig)  # type: ignore
+    mongo: MongoConfig = Field(default_factory=MongoConfig)  # type: ignore
+    email: EmailConfig = Field(default_factory=EmailConfig)  # type: ignore
+    app: AppConfig = Field(default_factory=AppConfig)  # type: ignore
+    cloud_tasks: CloudTasksConfig = Field(
+        default_factory=CloudTasksConfig  # type: ignore
+    )
 
     def configure_logging(self) -> None:
         """Configure application logging based on settings."""
