@@ -110,7 +110,7 @@ class CloudTasksConfig(BaseSettings):
     )
     api_key: str = Field(..., description="API key to call protected endpoints")
     dispatch_delay_seconds: int = Field(
-        default=10,
+        default=20,
         description="Delay between queued tasks in seconds",
     )
 
