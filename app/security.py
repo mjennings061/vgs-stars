@@ -23,7 +23,7 @@ async def verify_api_key(
     request: Request,
     api_key: str | None = Security(api_key_header),
 ) -> dict:
-    """Validate API key from header using MongoDB-backed records only."""
+    """Validate API key from header using Firestore-backed records only."""
     settings = get_settings()
     header_name = settings.app.api_key_header_name or DEFAULT_API_KEY_HEADER
 
@@ -38,9 +38,9 @@ async def verify_api_key(
             headers={"WWW-Authenticate": "API-Key"},
         )
 
-    # MongoDB-backed keys (no static shortcuts)
+    # Firestore-backed keys (no static shortcuts)
     try:
-        record = api_keys.resolve_api_key(api_key)
+        record = await api_keys.resolve_api_key(api_key)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("API key validation failed: %s", exc, exc_info=True)
         raise HTTPException(
@@ -56,4 +56,4 @@ async def verify_api_key(
             headers={"WWW-Authenticate": "API-Key"},
         )
 
-    return {"source": "mongo", "name": record.get("name")}
+    return {"source": "firestore", "name": record.get("name")}

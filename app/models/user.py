@@ -1,4 +1,4 @@
-"""Pydantic model for API users stored in MongoDB."""
+"""Pydantic model for API users stored in Firestore."""
 
 from datetime import datetime
 

@@ -40,11 +40,12 @@ async def readiness_check() -> dict:
     """
     checks = {}
 
-    # Check MongoDB connection
+    # Check Firestore connection
     try:
-        db = database.get_database()
-        # Simple ping to verify connection
-        db.command("ping")
+        client = database.get_client()
+        # Simple operation to verify connection
+        collections = [c async for c in client.collections()]
+        _ = collections
         checks["database"] = "ok"
     except Exception as e:
         logger.error("Database readiness check failed: %s", e)

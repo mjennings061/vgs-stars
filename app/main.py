@@ -23,8 +23,8 @@ async def lifespan(fastapi_app: FastAPI):
     """Application lifespan context manager for startup and shutdown events.
 
     Handles:
-    - Startup: Initialise MongoDB connection and ensure indexes
-    - Shutdown: Close MongoDB connection gracefully
+    - Startup: Initialise Firestore connection
+    - Shutdown: Close Firestore connection gracefully
 
     Args:
         fastapi_app: FastAPI application instance.
@@ -44,11 +44,7 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         # Initialise database connection
         database.get_client()
-        logger.info("MongoDB connection initialised")
-
-        # Ensure database indexes exist
-        database.ensure_indexes()
-        logger.info("Database indexes verified")
+        logger.info("Firestore connection initialised")
 
         logger.info("Application startup complete")
 
@@ -61,8 +57,8 @@ async def lifespan(fastapi_app: FastAPI):
     # Shutdown
     logger.info("Shutting down application...")
     try:
-        database.close_client()
-        logger.info("MongoDB connection closed")
+        await database.close_client()
+        logger.info("Firestore connection closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e, exc_info=True)
 

@@ -18,7 +18,7 @@ from app.services.notification_service import should_send_notification
 async def test_root_endpoint(test_client):
     """Test the root endpoint returns service information."""
     response = test_client.get("/")
-    # Protected: expect 401 (no key) or 503 if Mongo unavailable
+    # Protected: expect 401 (no key) or 503 if Firestore unavailable
     assert response.status_code in [401, 503]
 
 
@@ -36,7 +36,7 @@ async def test_health_check(test_client):
 async def test_notify_auth_expiry_accepts_request(test_client):
     """Test the notify-auth-expiry endpoint accepts valid requests.
 
-    Note: This test may fail if STARS API or MongoDB are not accessible.
+    Note: This test may fail if STARS API or Firestore are not accessible.
     It's primarily to verify the endpoint structure is correct.
     """
     response = test_client.post(
@@ -143,17 +143,19 @@ async def test_partial_notification_filters_already_notified_auths():
         103: [],
     }
 
+    # Create an async version of the side effect
+    async def async_get_notifications(auth_id):
+        return mock_notifications.get(auth_id, [])
+
     with patch(
         "app.services.notification_service.database.get_notifications_for_auth"
     ) as mock_get_notifications:
-        mock_get_notifications.side_effect = lambda auth_id: mock_notifications.get(
-            auth_id, []
-        )
+        mock_get_notifications.side_effect = async_get_notifications
 
         # Test each auth
-        result_1 = should_send_notification(auth_1)
-        result_2 = should_send_notification(auth_2)
-        result_3 = should_send_notification(auth_3)
+        result_1 = await should_send_notification(auth_1)
+        result_2 = await should_send_notification(auth_2)
+        result_3 = await should_send_notification(auth_3)
 
         # Verify results
         assert result_1 is False, "auth_1 should not be sent (already notified)"
