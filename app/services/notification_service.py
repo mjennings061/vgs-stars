@@ -41,7 +41,7 @@ def group_auths_by_person(auths: list[Auth]) -> dict[str, list[Auth]]:
     return dict(auth_groups)
 
 
-def should_send_notification(auth: Auth) -> bool:
+async def should_send_notification(auth: Auth) -> bool:
     """Check if a notification should be sent for this authorisation.
 
     Performs deduplication check to avoid sending duplicate notifications.
@@ -53,7 +53,7 @@ def should_send_notification(auth: Auth) -> bool:
         True if notification should be sent, False if already sent.
     """
     # Check if we've already sent a notification for this auth
-    existing_notifications = database.get_notifications_for_auth(auth.id)
+    existing_notifications = await database.get_notifications_for_auth(auth.id)
 
     # Filter for sent or pending notifications
     for notif in existing_notifications:
@@ -156,7 +156,7 @@ def _create_error_result(error: Exception) -> dict:
     }
 
 
-def _process_person_notification(
+async def _process_person_notification(
     resource_id: str,
     person_auths: list[Auth],
     unit_id: str,
@@ -185,7 +185,10 @@ def _process_person_notification(
     user = stars_client.get_user(person.user_id)
 
     # Filter auths that need notification (deduplication)
-    auths_to_notify = [auth for auth in person_auths if should_send_notification(auth)]
+    auths_to_notify = []
+    for auth in person_auths:
+        if await should_send_notification(auth):
+            auths_to_notify.append(auth)
 
     if not auths_to_notify:
         logger.info("All auths for %s already notified, skipping", user.email)
@@ -198,7 +201,7 @@ def _process_person_notification(
         NotificationType.EXPIRED if has_expired else NotificationType.EXPIRING_SOON
     )
 
-    existing_batch = database.get_pending_batch_for_user(
+    existing_batch = await database.get_pending_batch_for_user(
         user.id, notification_type=notification_type
     )
     if existing_batch:
@@ -214,7 +217,7 @@ def _process_person_notification(
     )
 
     # Persist the batch before queuing so the task can look it up.
-    batch_id = database.save_notification_batch(batch)
+    batch_id = await database.save_notification_batch(batch)
 
     try:
         cloud_tasks.enqueue_send_notification(batch_id, delay_seconds)
@@ -223,7 +226,7 @@ def _process_person_notification(
     except Exception as e:
         error_msg = f"Failed to queue notification for {user.email}: {e}"
         logger.error("Failed to queue notification: %s", e)
-        database.update_notification_batch(
+        await database.update_notification_batch(
             batch_id=batch_id,
             status=NotificationStatus.FAILED,
             sent_at=datetime.now(),
@@ -232,7 +235,7 @@ def _process_person_notification(
         return False, error_msg
 
 
-def check_and_notify_expiring_auths(
+async def check_and_notify_expiring_auths(
     unit_id: str | None = None, warning_days: int | None = None
 ) -> dict:
     """Check for expiring authorisations and send notifications.
@@ -294,7 +297,7 @@ def check_and_notify_expiring_auths(
                 delay_seconds = (
                     queue_position * settings.cloud_tasks.dispatch_delay_seconds
                 )
-                success, error_msg = _process_person_notification(
+                success, error_msg = await _process_person_notification(
                     resource_id, person_auths, unit_id, delay_seconds
                 )
                 if success:
@@ -336,7 +339,7 @@ def check_and_notify_expiring_auths(
         return _create_error_result(e)
 
 
-def notify_expiring_auths_for_resource(
+async def notify_expiring_auths_for_resource(
     resource_id: str, unit_id: str | None = None, warning_days: int | None = None
 ) -> dict:
     """Send expiring authorisation notifications for a single resource.
@@ -461,7 +464,7 @@ def notify_expiring_auths_for_resource(
         }
 
 
-def send_notification_batch(batch_id: str) -> dict:
+async def send_notification_batch(batch_id: str) -> dict:
     """Send a queued notification batch by ID.
 
     Args:
@@ -470,7 +473,7 @@ def send_notification_batch(batch_id: str) -> dict:
     Returns:
         Result payload describing the send outcome.
     """
-    batch_doc = database.get_notification_batch(batch_id)
+    batch_doc = await database.get_notification_batch(batch_id)
     if not batch_doc:
         return {
             "success": False,
@@ -522,7 +525,7 @@ def send_notification_batch(batch_id: str) -> dict:
         for auth_summary in batch.auths
     ]
 
-    database.finalise_notification_batch(
+    await database.finalise_notification_batch(
         batch_id=batch_id,
         status=status,
         sent_at=sent_at,

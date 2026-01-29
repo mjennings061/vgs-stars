@@ -25,18 +25,15 @@ class StarsConfig(BaseSettings):
     org_unit_id: str = Field(..., description="Default organisation unit ID")
 
 
-class MongoConfig(BaseSettings):
-    """MongoDB configuration settings."""
+class DatabaseConfig(BaseSettings):
+    """Database configuration settings for Firestore."""
 
     model_config = SettingsConfigDict(
-        env_prefix="MONGO_",
+        env_prefix="DATABASE_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
-
-    uri: str = Field(..., description="MongoDB connection URI")
-    db_name: str = Field(default="stars", description="Database name")
 
     # Collection names
     notifications_collection: str = Field(
@@ -127,7 +124,7 @@ class Settings(BaseSettings):
     )
 
     stars: StarsConfig = Field(default_factory=StarsConfig)  # type: ignore
-    mongo: MongoConfig = Field(default_factory=MongoConfig)  # type: ignore
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # type: ignore
     email: EmailConfig = Field(default_factory=EmailConfig)  # type: ignore
     app: AppConfig = Field(default_factory=AppConfig)  # type: ignore
     cloud_tasks: CloudTasksConfig = Field(
@@ -148,10 +145,9 @@ class Settings(BaseSettings):
 
         # Quiet noisy third-party loggers
         for noisy_logger in (
-            "pymongo",
-            "pymongo.ocsp_support",
-            "pymongo.pool",
-            "pymongo.topology",
+            "google.cloud.firestore_v1",
+            "google.auth",
+            "google.api_core",
         ):
             logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 

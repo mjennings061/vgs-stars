@@ -93,7 +93,7 @@ async def notify_auth_expiry(
     )
 
     try:
-        result = notification_service.check_and_notify_expiring_auths(
+        result = await notification_service.check_and_notify_expiring_auths(
             unit_id=request.unit_id,
             warning_days=request.warning_days,
         )
@@ -124,7 +124,7 @@ async def send_notification(request: SendNotificationRequest) -> dict:
 
     try:
         # This endpoint is called by Cloud Tasks using the API key header.
-        result = notification_service.send_notification_batch(request.batch_id)
+        result = await notification_service.send_notification_batch(request.batch_id)
         if not result.get("success"):
             raise HTTPException(status_code=404, detail=result.get("error"))
         return result
@@ -166,7 +166,7 @@ async def notify_auth_expiry_for_user(
     )
 
     try:
-        result = notification_service.notify_expiring_auths_for_resource(
+        result = await notification_service.notify_expiring_auths_for_resource(
             resource_id=request.resource_id,
             unit_id=request.unit_id,
             warning_days=request.warning_days,

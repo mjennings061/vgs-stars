@@ -1,6 +1,6 @@
-"""Pydantic models for notification data and MongoDB documents.
+"""Pydantic models for notification data and Firestore documents.
 
-These models represent notification records stored in MongoDB,
+These models represent notification records stored in Firestore,
 including individual notifications and batched notifications for email sending.
 """
 
@@ -26,7 +26,7 @@ class NotificationStatus(str, Enum):
 
 
 class Notification(BaseModel):
-    """Individual notification document for MongoDB.
+    """Individual notification document for Firestore.
 
     Represents a single notification for one authorisation expiring for one user.
     Used for deduplication and tracking.
@@ -59,7 +59,7 @@ class Notification(BaseModel):
 
     @field_serializer("expiry_date")
     def serialise_date_to_datetime(self, value: date) -> datetime:
-        """Convert date to datetime for MongoDB compatibility."""
+        """Convert date to datetime for Firestore compatibility."""
         return datetime.combine(value, datetime.min.time())
 
 
@@ -75,12 +75,12 @@ class AuthSummary(BaseModel):
 
     @field_serializer("expiry_date")
     def serialise_date_to_datetime(self, value: date) -> datetime:
-        """Convert date to datetime for MongoDB compatibility."""
+        """Convert date to datetime for Firestore compatibility."""
         return datetime.combine(value, datetime.min.time())
 
 
 class NotificationBatch(BaseModel):
-    """Batched notification document for MongoDB.
+    """Batched notification document for Firestore.
 
     Represents multiple authorisations expiring for one user,
     batched into a single email notification.

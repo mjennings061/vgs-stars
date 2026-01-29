@@ -16,10 +16,6 @@ def setup_test_env():
     os.environ["STARS_API_KEY"] = "test_api_key"
     os.environ["STARS_ORG_UNIT_ID"] = "test_org_unit_id"
 
-    # MongoDB Configuration
-    os.environ["MONGO_URI"] = "mongodb://localhost:27017"
-    os.environ["MONGO_DB_NAME"] = "test_stars"
-
     # Email Configuration
     os.environ["SENDGRID_API_KEY"] = "test_sendgrid_key"
     os.environ["SENDGRID_FROM_EMAIL"] = "test@example.com"

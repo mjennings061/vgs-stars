@@ -1,17 +1,16 @@
-"""MongoDB database service for notification storage and retrieval.
+"""Firestore database service for notification storage and retrieval.
 
-Provides functions for connecting to MongoDB and performing CRUD operations
-on notification collections with proper indexing.
+Provides functions for connecting to Firestore and performing CRUD operations
+on notification collections.
 """
 
 import logging
 from datetime import datetime
 from typing import Any
 
-from bson import ObjectId
-from pymongo import ASCENDING, DESCENDING, MongoClient
-from pymongo.collection import Collection
-from pymongo.database import Database
+from google.cloud import firestore
+from google.cloud.firestore_v1 import FieldFilter
+from google.cloud.firestore_v1.async_client import AsyncClient
 
 from app.config import get_settings
 from app.models.notifications import (
@@ -23,93 +22,43 @@ from app.models.notifications import (
 
 logger = logging.getLogger(__name__)
 
-# Global MongoDB client instance
-_client: MongoClient | None = None
+# Global Firestore async client instance
+_client: AsyncClient | None = None
 
 
-def get_client() -> MongoClient:
-    """Get or create the MongoDB client singleton.
+def get_client() -> AsyncClient:
+    """Get or create the Firestore async client singleton.
 
     Returns:
-        MongoClient instance.
+        AsyncClient instance.
     """
     global _client
     if _client is None:
-        settings = get_settings()
-        logger.info("Connecting to MongoDB...")
-        _client = MongoClient(settings.mongo.uri)
-        logger.info("MongoDB connection established")
+        logger.info("Connecting to Firestore...")
+        _client = AsyncClient()
+        logger.info("Firestore connection established")
     return _client
 
 
-def get_database() -> Database:
-    """Get the STARS database.
-
-    Returns:
-        Database instance for STARS data.
-    """
-    settings = get_settings()
-    client = get_client()
-    return client[settings.mongo.db_name]
-
-
-def get_collection(name: str) -> Collection:
-    """Get a collection by name from the STARS database.
+def get_collection(name: str) -> firestore.AsyncCollectionReference:
+    """Get a collection by name from Firestore.
 
     Args:
         name: Collection name.
 
     Returns:
-        Collection instance.
+        AsyncCollectionReference instance.
     """
-    db = get_database()
-    return db[name]
+    client = get_client()
+    return client.collection(name)
 
 
-def ensure_indexes() -> None:
-    """Create database indexes for performance and deduplication.
-
-    Creates indexes on:
-    - auths_notification: (authId, userId, sentAt) for deduplication
-    - auth_notification_batches: (userId, sentAt) for user history
-    - users: (api_key) for fast API key lookup
-    """
-    settings = get_settings()
-    db = get_database()
-
-    logger.info("Ensuring database indexes...")
-
-    # Notifications collection indexes
-    notifications_col = db[settings.mongo.notifications_collection]
-    notifications_col.create_index(
-        [("authId", ASCENDING), ("userId", ASCENDING), ("sentAt", DESCENDING)],
-        name="auth_user_sent_idx",
-    )
-
-    # Notification batches collection indexes
-    batches_col = db[settings.mongo.notification_batches_collection]
-    batches_col.create_index(
-        [("userId", ASCENDING), ("sentAt", DESCENDING)],
-        name="user_sent_idx",
-    )
-
-    # Users collection indexes (hashed API key)
-    users_col = db[settings.mongo.users_collection]
-    users_col.create_index(
-        [("api_key", ASCENDING)],
-        name="api_key_unique",
-        unique=True,
-    )
-
-    logger.info("Database indexes created successfully")
-
-
-def save_notification_with_batch(
+async def save_notification_with_batch(
     batch: NotificationBatch, notifications: list[Notification]
 ) -> tuple[str, list[str]]:
     """Save notification batch and individual notifications atomically.
 
-    Uses MongoDB transactions to ensure both batch and individual notifications
+    Uses Firestore transactions to ensure both batch and individual notifications
     are saved together, maintaining consistency for deduplication.
 
     Args:
@@ -118,41 +67,45 @@ def save_notification_with_batch(
 
     Returns:
         Tuple of (batch_id, list of notification_ids).
-
-    Raises:
-        Exception: If transaction fails, all changes are rolled back.
     """
     settings = get_settings()
     client = get_client()
 
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
-    notif_col = get_collection(settings.mongo.notifications_collection)
+    batch_col = get_collection(settings.database.notification_batches_collection)
+    notif_col = get_collection(settings.database.notifications_collection)
 
-    with client.start_session() as session:
-        with session.start_transaction():
-            # Save batch
-            batch_doc = batch.model_dump(by_alias=True)
-            batch_result = batch_col.insert_one(batch_doc, session=session)
+    @firestore.async_transactional
+    async def save_in_transaction(transaction):
+        """Execute the save operation within a transaction."""
+        # Save batch
+        batch_doc = batch.model_dump(by_alias=True, mode="json")
+        batch_ref = batch_col.document()
+        transaction.set(batch_ref, batch_doc)
 
-            # Save individual notifications
-            notif_ids = []
-            for notification in notifications:
-                notif_doc = notification.model_dump(by_alias=True)
-                notif_result = notif_col.insert_one(notif_doc, session=session)
-                notif_ids.append(str(notif_result.inserted_id))
+        # Save individual notifications
+        notif_ids = []
+        for notification in notifications:
+            notif_doc = notification.model_dump(by_alias=True, mode="json")
+            notif_ref = notif_col.document()
+            transaction.set(notif_ref, notif_doc)
+            notif_ids.append(notif_ref.id)
 
-            logger.info(
-                "Saved notification batch for user %s with %d individual "
-                "notifications: %s",
-                batch.user_email,
-                len(notifications),
-                batch_result.inserted_id,
-            )
+        return batch_ref.id, notif_ids
 
-            return str(batch_result.inserted_id), notif_ids
+    transaction = client.transaction()
+    batch_id, notif_ids = await save_in_transaction(transaction)
+
+    logger.info(
+        "Saved notification batch for user %s with %d individual notifications: %s",
+        batch.user_email,
+        len(notifications),
+        batch_id,
+    )
+
+    return batch_id, notif_ids
 
 
-def save_notification_batch(batch: NotificationBatch) -> str:
+async def save_notification_batch(batch: NotificationBatch) -> str:
     """Save a notification batch without individual notifications.
 
     Args:
@@ -162,18 +115,19 @@ def save_notification_batch(batch: NotificationBatch) -> str:
         Inserted batch ID as a string.
     """
     settings = get_settings()
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
-    batch_doc = batch.model_dump(by_alias=True)
-    result = batch_col.insert_one(batch_doc)
+    batch_col = get_collection(settings.database.notification_batches_collection)
+    batch_doc = batch.model_dump(by_alias=True, mode="json")
+    doc_ref = batch_col.document()
+    await doc_ref.set(batch_doc)
     logger.info(
         "Saved notification batch for user %s with id %s",
         batch.user_email,
-        result.inserted_id,
+        doc_ref.id,
     )
-    return str(result.inserted_id)
+    return doc_ref.id
 
 
-def get_notification_batch(batch_id: str) -> dict[str, Any] | None:
+async def get_notification_batch(batch_id: str) -> dict[str, Any] | None:
     """Fetch a notification batch by ID.
 
     Args:
@@ -182,17 +136,20 @@ def get_notification_batch(batch_id: str) -> dict[str, Any] | None:
     Returns:
         Batch document if found, otherwise None.
     """
-    try:
-        object_id = ObjectId(batch_id)
-    except Exception:
-        return None
-
     settings = get_settings()
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
-    return batch_col.find_one({"_id": object_id})
+    batch_col = get_collection(settings.database.notification_batches_collection)
+    doc_ref = batch_col.document(batch_id)
+    doc = await doc_ref.get()
+
+    if doc.exists:
+        data = doc.to_dict()
+        if data is not None:
+            data["_id"] = doc.id
+            return data
+    return None
 
 
-def get_pending_batch_for_user(
+async def get_pending_batch_for_user(
     user_id: str, notification_type: NotificationType | None = None
 ) -> dict[str, Any] | None:
     """Return the most recent pending batch for a user if one exists.
@@ -205,19 +162,29 @@ def get_pending_batch_for_user(
         Batch document if found, otherwise None.
     """
     settings = get_settings()
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
-    query: dict[str, Any] = {
-        "userId": user_id,
-        "status": NotificationStatus.PENDING.value,
-    }
+    batch_col = get_collection(settings.database.notification_batches_collection)
+
+    query = batch_col.where(filter=FieldFilter("userId", "==", user_id)).where(
+        filter=FieldFilter("status", "==", NotificationStatus.PENDING.value)
+    )
+
     if notification_type is not None:
-        query["notificationType"] = notification_type.value
+        query = query.where(
+            filter=FieldFilter("notificationType", "==", notification_type.value)
+        )
 
-    # Prefer the newest pending batch to avoid duplicate sends.
-    return batch_col.find_one(query, sort=[("_id", DESCENDING)])
+    query = query.order_by("sentAt", direction=firestore.Query.DESCENDING).limit(1)
+
+    async for doc in query.stream():
+        data = doc.to_dict()
+        if data is not None:
+            data["_id"] = doc.id
+            return data
+
+    return None
 
 
-def finalise_notification_batch(
+async def finalise_notification_batch(
     batch_id: str,
     status: NotificationStatus,
     sent_at: datetime | None,
@@ -235,30 +202,31 @@ def finalise_notification_batch(
     """
     settings = get_settings()
     client = get_client()
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
-    notif_col = get_collection(settings.mongo.notifications_collection)
+    batch_col = get_collection(settings.database.notification_batches_collection)
+    notif_col = get_collection(settings.database.notifications_collection)
 
-    object_id = ObjectId(batch_id)
-    update_fields: dict[str, Any] = {
-        "status": status.value,
-        "sentAt": sent_at,
-        "error": error,
-    }
+    @firestore.async_transactional
+    async def update_in_transaction(transaction):
+        """Execute the update operation within a transaction."""
+        batch_ref = batch_col.document(batch_id)
+        update_fields: dict[str, Any] = {
+            "status": status.value,
+            "sentAt": sent_at,
+            "error": error,
+        }
+        transaction.update(batch_ref, update_fields)
 
-    # Use a transaction to keep batch status and notifications consistent.
-    with client.start_session() as session:
-        with session.start_transaction():
-            batch_col.update_one(
-                {"_id": object_id},
-                {"$set": update_fields},
-                session=session,
-            )
-            if notifications:
-                notif_docs = [n.model_dump(by_alias=True) for n in notifications]
-                notif_col.insert_many(notif_docs, session=session)
+        if notifications:
+            for notification in notifications:
+                notif_doc = notification.model_dump(by_alias=True, mode="json")
+                notif_ref = notif_col.document()
+                transaction.set(notif_ref, notif_doc)
+
+    transaction = client.transaction()
+    await update_in_transaction(transaction)
 
 
-def update_notification_batch(
+async def update_notification_batch(
     batch_id: str,
     status: NotificationStatus,
     sent_at: datetime | None = None,
@@ -275,23 +243,24 @@ def update_notification_batch(
     Returns:
         True if the batch was matched and updated, otherwise False.
     """
-    try:
-        object_id = ObjectId(batch_id)
-    except Exception:
+    settings = get_settings()
+    batch_col = get_collection(settings.database.notification_batches_collection)
+    doc_ref = batch_col.document(batch_id)
+
+    doc = await doc_ref.get()
+    if not doc.exists:
         return False
 
-    settings = get_settings()
-    batch_col = get_collection(settings.mongo.notification_batches_collection)
     update_fields: dict[str, Any] = {
         "status": status.value,
         "sentAt": sent_at,
         "error": error,
     }
-    result = batch_col.update_one({"_id": object_id}, {"$set": update_fields})
-    return result.matched_count > 0
+    await doc_ref.update(update_fields)
+    return True
 
 
-def get_notifications_for_auth(auth_id: int) -> list[dict[str, Any]]:
+async def get_notifications_for_auth(auth_id: int) -> list[dict[str, Any]]:
     """Get all notifications for a specific authorisation (deduplication check).
 
     Args:
@@ -301,20 +270,28 @@ def get_notifications_for_auth(auth_id: int) -> list[dict[str, Any]]:
         List of notification documents for this authorisation.
     """
     settings = get_settings()
-    col = get_collection(settings.mongo.notifications_collection)
+    col = get_collection(settings.database.notifications_collection)
 
-    notifications = list(col.find({"authId": auth_id}))
+    query = col.where(filter=FieldFilter("authId", "==", auth_id))
+
+    notifications = []
+    async for doc in query.stream():
+        data = doc.to_dict()
+        if data is not None:
+            data["_id"] = doc.id
+            notifications.append(data)
+
     logger.debug(
         "Found %d existing notifications for auth %d", len(notifications), auth_id
     )
     return notifications
 
 
-def close_client() -> None:
-    """Close the MongoDB client connection gracefully."""
+async def close_client() -> None:
+    """Close the Firestore async client connection gracefully."""
     global _client
     if _client is not None:
-        logger.info("Closing MongoDB connection...")
+        logger.info("Closing Firestore connection...")
         _client.close()
         _client = None
-        logger.info("MongoDB connection closed")
+        logger.info("Firestore connection closed")
