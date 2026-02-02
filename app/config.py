@@ -5,7 +5,10 @@ environment variable loading and validation.
 """
 
 import logging
+import os
 
+from google.cloud import logging as cloud_logging
+from google.cloud.logging.handlers import CloudLoggingHandler
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -132,18 +135,48 @@ class Settings(BaseSettings):
     )
 
     def configure_logging(self) -> None:
-        """Configure application logging based on settings."""
+        """Configure application logging based on settings.
+
+        Uses Google Cloud Logging in Cloud Run for structured JSON logs.
+        Uses standard Python logging locally for readable text output.
+        """
+        # Determine log level
         numeric_level = getattr(logging, self.app.log_level.upper(), None)
         if not isinstance(numeric_level, int):
             numeric_level = logging.INFO
 
-        logging.basicConfig(
-            level=numeric_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+        # Detect Cloud Run environment
+        is_cloud_run = os.getenv("K_SERVICE") is not None
 
-        # Quiet noisy third-party loggers
+        # Get root logger and clear existing handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+        root_logger.setLevel(numeric_level)
+
+        if is_cloud_run:
+            # Cloud Run: Use Google Cloud Logging for structured JSON logs
+            try:
+                client = cloud_logging.Client()
+                handler = CloudLoggingHandler(client)
+                handler.setLevel(numeric_level)
+                root_logger.addHandler(handler)
+            except Exception:
+                # Fallback to console logging if Cloud Logging fails
+                logging.basicConfig(
+                    level=numeric_level,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+                logging.exception("Failed to initialise Cloud Logging, using console")
+        else:
+            # Local: Use standard text logging for readability
+            logging.basicConfig(
+                level=numeric_level,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+
+        # Quiet noisy third-party loggers in both environments
         for noisy_logger in (
             "google.cloud.firestore_v1",
             "google.auth",
