@@ -4,11 +4,12 @@ This module provides type-safe configuration management with automatic
 environment variable loading and validation.
 """
 
+import json
 import logging
 import os
+import sys
+from datetime import datetime as dt
 
-from google.cloud import logging as cloud_logging
-from google.cloud.logging.handlers import CloudLoggingHandler
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -154,14 +155,34 @@ class Settings(BaseSettings):
         root_logger.setLevel(numeric_level)
 
         if is_cloud_run:
-            # Cloud Run: Use Google Cloud Logging for structured JSON logs
+            # Cloud Run: Output structured JSON logs to stdout
+            # Cloud Run automatically captures stdout/stderr
             try:
-                client = cloud_logging.Client()
-                handler = CloudLoggingHandler(client)
-                handler.setLevel(numeric_level)
+
+                class CloudRunJsonFormatter(logging.Formatter):
+                    """JSON formatter for Cloud Run structured logging."""
+
+                    def format(self, record: logging.LogRecord) -> str:
+                        """Format log record as JSON for Cloud Logging."""
+                        log_entry = {
+                            "severity": record.levelname,
+                            "message": record.getMessage(),
+                            "name": record.name,  # Include logger name (module path)
+                            "timestamp": dt.fromtimestamp(record.created).isoformat()
+                            + "Z",
+                        }
+                        # Include exception info if present
+                        if record.exc_info:
+                            log_entry["exc_info"] = self.formatException(
+                                record.exc_info
+                            )
+                        return json.dumps(log_entry)
+
+                handler = logging.StreamHandler(sys.stdout)
+                handler.setFormatter(CloudRunJsonFormatter())
                 root_logger.addHandler(handler)
             except Exception:
-                # Fallback to console logging if Cloud Logging fails
+                # Fallback to console logging if Cloud Logging setup fails
                 logging.basicConfig(
                     level=numeric_level,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -181,6 +202,8 @@ class Settings(BaseSettings):
             "google.cloud.firestore_v1",
             "google.auth",
             "google.api_core",
+            "grpc",
+            "urllib3",
         ):
             logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 

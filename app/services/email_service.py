@@ -14,7 +14,6 @@ from app.models.notifications import NotificationBatch
 
 logger = logging.getLogger(__name__)
 
-
 UNSUBSCRIBE_GROUP_ID = 27661
 # Preference center raw URL (two-step unsubscribe to avoid bot clicks)
 ASM_PREFERENCES_URL_TAG = "<%asm_preferences_raw_url%>"
