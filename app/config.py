@@ -1,7 +1,7 @@
-"""Application configuration using Pydantic Settings.
+"""Application configuration loaded from environment variables.
 
-This module provides type-safe configuration management with automatic
-environment variable loading and validation.
+All settings are read eagerly at import time via os.environ[] so that
+missing variables surface immediately as KeyError on startup.
 """
 
 import json
@@ -10,216 +10,93 @@ import os
 import sys
 from datetime import datetime as dt
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+# -- STARS API -----------------------------------------------------------------
+STARS_URI = os.environ["STARS_URI"]
+STARS_API_KEY = os.environ["STARS_API_KEY"]
+STARS_ORG_UNIT_ID = os.environ["STARS_ORG_UNIT_ID"]
+
+# -- Database (Firestore collection names) ------------------------------------
+DATABASE_NOTIFICATIONS_COLLECTION = os.environ["DATABASE_NOTIFICATIONS_COLLECTION"]
+DATABASE_NOTIFICATION_BATCHES_COLLECTION = os.environ[
+    "DATABASE_NOTIFICATION_BATCHES_COLLECTION"
+]
+DATABASE_USERS_COLLECTION = os.environ["DATABASE_USERS_COLLECTION"]
+
+# -- Email (SendGrid) ---------------------------------------------------------
+SENDGRID_API_KEY = os.environ["SENDGRID_API_KEY"]
+SENDGRID_FROM_EMAIL = os.environ["SENDGRID_FROM_EMAIL"]
+SENDGRID_FROM_NAME = os.environ["SENDGRID_FROM_NAME"]
+
+# -- Application ---------------------------------------------------------------
+EXPIRY_WARNING_DAYS = int(os.environ["EXPIRY_WARNING_DAYS"])
+LOG_LEVEL = os.environ["LOG_LEVEL"]
+API_KEY_HEADER_NAME = os.environ["API_KEY_HEADER_NAME"]
+CLOUD_TASKS_QUEUE_PATH = os.environ["CLOUD_TASKS_QUEUE_PATH"]
+
+# -- Cloud Tasks ---------------------------------------------------------------
+CLOUD_TASKS_TARGET_URL = os.environ["CLOUD_TASKS_TARGET_URL"]
+CLOUD_TASKS_API_KEY = os.environ["CLOUD_TASKS_API_KEY"]
+CLOUD_TASKS_DISPATCH_DELAY_SECONDS = int(
+    os.environ["CLOUD_TASKS_DISPATCH_DELAY_SECONDS"]
+)
 
 
-class StarsConfig(BaseSettings):
-    """STARS API configuration settings."""
+def configure_logging() -> None:
+    """Configure application logging.
 
-    model_config = SettingsConfigDict(
-        env_prefix="STARS_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    Uses Google Cloud Logging in Cloud Run for structured JSON logs.
+    Uses standard Python logging locally for readable text output.
+    """
+    numeric_level = getattr(logging, LOG_LEVEL.upper(), None)
+    if not isinstance(numeric_level, int):
+        numeric_level = logging.INFO
 
-    uri: str = Field(..., description="STARS API base URI")
-    api_key: str = Field(..., description="STARS API authentication key")
-    org_unit_id: str = Field(..., description="Default organisation unit ID")
+    is_cloud_run = os.getenv("K_SERVICE") is not None
 
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(numeric_level)
 
-class DatabaseConfig(BaseSettings):
-    """Database configuration settings for Firestore."""
+    if is_cloud_run:
+        try:
 
-    model_config = SettingsConfigDict(
-        env_prefix="DATABASE_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+            class CloudRunJsonFormatter(logging.Formatter):
+                """JSON formatter for Cloud Run structured logging."""
 
-    # Collection names
-    notifications_collection: str = Field(
-        default="auths_notification",
-        description="Collection for individual notifications",
-    )
-    notification_batches_collection: str = Field(
-        default="auth_notification_batches",
-        description="Collection for batched notifications",
-    )
-    users_collection: str = Field(
-        default="users",
-        description="Collection for API users and hashed API keys",
-    )
+                def format(self, record: logging.LogRecord) -> str:
+                    log_entry = {
+                        "severity": record.levelname,
+                        "message": record.getMessage(),
+                        "name": record.name,
+                        "timestamp": dt.fromtimestamp(record.created).isoformat()
+                        + "Z",
+                    }
+                    if record.exc_info:
+                        log_entry["exc_info"] = self.formatException(record.exc_info)
+                    return json.dumps(log_entry)
 
-
-class EmailConfig(BaseSettings):
-    """Email service configuration settings."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="SENDGRID_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    api_key: str = Field(..., description="SendGrid API key")
-    from_email: str = Field(..., description="Sender email address")
-    from_name: str = Field(default="STARS Expiry", description="Sender name")
-
-
-class AppConfig(BaseSettings):
-    """General application configuration settings."""
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    expiry_warning_days: int = Field(
-        default=30,
-        description="Number of days before expiry to send warnings",
-    )
-    log_level: str = Field(
-        default="INFO",
-        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
-    )
-    api_key_header_name: str = Field(
-        default="X-API-Key",
-        description="HTTP header name used to pass the API key",
-    )
-    cloud_tasks_queue_path: str = Field(
-        ...,
-        description="Cloud Tasks queue path (projects/.../locations/.../queues/...)",
-    )
-
-
-class CloudTasksConfig(BaseSettings):
-    """Google Cloud Tasks configuration settings."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="CLOUD_TASKS_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    target_url: str = Field(
-        ..., description="Full URL for the send-notification endpoint"
-    )
-    api_key: str = Field(..., description="API key to call protected endpoints")
-    dispatch_delay_seconds: int = Field(
-        default=20,
-        description="Delay between queued tasks in seconds",
-    )
-
-
-class Settings(BaseSettings):
-    """Main application settings combining all configuration sections."""
-
-    # Load from .env
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
-
-    stars: StarsConfig = Field(default_factory=StarsConfig)  # type: ignore
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)  # type: ignore
-    email: EmailConfig = Field(default_factory=EmailConfig)  # type: ignore
-    app: AppConfig = Field(default_factory=AppConfig)  # type: ignore
-    cloud_tasks: CloudTasksConfig = Field(
-        default_factory=CloudTasksConfig  # type: ignore
-    )
-
-    def configure_logging(self) -> None:
-        """Configure application logging based on settings.
-
-        Uses Google Cloud Logging in Cloud Run for structured JSON logs.
-        Uses standard Python logging locally for readable text output.
-        """
-        # Determine log level
-        numeric_level = getattr(logging, self.app.log_level.upper(), None)
-        if not isinstance(numeric_level, int):
-            numeric_level = logging.INFO
-
-        # Detect Cloud Run environment
-        is_cloud_run = os.getenv("K_SERVICE") is not None
-
-        # Get root logger and clear existing handlers
-        root_logger = logging.getLogger()
-        root_logger.handlers.clear()
-        root_logger.setLevel(numeric_level)
-
-        if is_cloud_run:
-            # Cloud Run: Output structured JSON logs to stdout
-            # Cloud Run automatically captures stdout/stderr
-            try:
-
-                class CloudRunJsonFormatter(logging.Formatter):
-                    """JSON formatter for Cloud Run structured logging."""
-
-                    def format(self, record: logging.LogRecord) -> str:
-                        """Format log record as JSON for Cloud Logging."""
-                        log_entry = {
-                            "severity": record.levelname,
-                            "message": record.getMessage(),
-                            "name": record.name,  # Include logger name (module path)
-                            "timestamp": dt.fromtimestamp(record.created).isoformat()
-                            + "Z",
-                        }
-                        # Include exception info if present
-                        if record.exc_info:
-                            log_entry["exc_info"] = self.formatException(
-                                record.exc_info
-                            )
-                        return json.dumps(log_entry)
-
-                handler = logging.StreamHandler(sys.stdout)
-                handler.setFormatter(CloudRunJsonFormatter())
-                root_logger.addHandler(handler)
-            except Exception:
-                # Fallback to console logging if Cloud Logging setup fails
-                logging.basicConfig(
-                    level=numeric_level,
-                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S",
-                )
-                logging.exception("Failed to initialise Cloud Logging, using console")
-        else:
-            # Local: Use standard text logging for readability
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(CloudRunJsonFormatter())
+            root_logger.addHandler(handler)
+        except Exception:
             logging.basicConfig(
                 level=numeric_level,
                 format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
+            logging.exception("Failed to initialise Cloud Logging, using console")
+    else:
+        logging.basicConfig(
+            level=numeric_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
 
-        # Quiet noisy third-party loggers in both environments
-        for noisy_logger in (
-            "google.cloud.firestore_v1",
-            "google.auth",
-            "google.api_core",
-            "grpc",
-            "urllib3",
-        ):
-            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
-
-
-# Global settings instance
-_settings: Settings | None = None
-
-
-def get_settings() -> Settings:
-    """Get or create the global settings instance.
-
-    Returns:
-        Settings instance with loaded configuration.
-    """
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-        _settings.configure_logging()
-    return _settings
+    for noisy_logger in (
+        "google.cloud.firestore_v1",
+        "google.auth",
+        "google.api_core",
+        "grpc",
+        "urllib3",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)

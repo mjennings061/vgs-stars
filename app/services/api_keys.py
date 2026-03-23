@@ -4,7 +4,7 @@ import hashlib
 
 from google.cloud.firestore_v1 import FieldFilter
 
-from app.config import get_settings
+from app.config import DATABASE_USERS_COLLECTION
 from app.services import database
 
 
@@ -28,8 +28,7 @@ async def resolve_api_key(api_key: str) -> dict | None:
     Returns:
         dict: Record of API key or None if none found"""
 
-    settings = get_settings()
-    col = database.get_collection(settings.database.users_collection)
+    col = database.get_collection(DATABASE_USERS_COLLECTION)
 
     key_hash = hash_api_key(api_key)
     query = col.where(filter=FieldFilter("api_key", "==", key_hash)).limit(1)

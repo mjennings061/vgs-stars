@@ -10,10 +10,13 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.config import get_settings
+from app.config import configure_logging
 from app.routes import auths, health
 from app.security import verify_api_key
 from app.services import database
+
+# Configure logging as early as possible.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +40,6 @@ async def lifespan(fastapi_app: FastAPI):
 
     # Load app
     _ = fastapi_app
-
-    # Load settings
-    _ = get_settings()
 
     try:
         # Initialise database connection

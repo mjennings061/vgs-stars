@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import requests
 
-from app.config import get_settings
+from app.config import STARS_API_KEY, STARS_URI
 from app.models.stars import Auth, Person, User
 
 logger = logging.getLogger(__name__)
@@ -26,9 +26,8 @@ def auth_header() -> dict:
     Returns:
         Dictionary with Authorization header.
     """
-    settings = get_settings()
     return {
-        "Authorization": settings.stars.api_key,
+        "Authorization": STARS_API_KEY,
     }
 
 
@@ -44,8 +43,7 @@ def get_person(person_id: str) -> Person:
     Raises:
         StarsAPIError: If API request fails or person not found.
     """
-    settings = get_settings()
-    url = f"{settings.stars.uri}/person/personnel"
+    url = f"{STARS_URI}/person/personnel"
 
     logger.debug("Fetching person data for %s", person_id)
 
@@ -79,8 +77,7 @@ def get_user(user_id: str) -> User:
     Raises:
         StarsAPIError: If API request fails or user not found.
     """
-    settings = get_settings()
-    url = f"{settings.stars.uri}/user/users/"
+    url = f"{STARS_URI}/user/users/"
 
     logger.debug("Fetching user data for %s", user_id)
 
@@ -114,9 +111,8 @@ def get_eng_auths_for_user(person_id: str) -> list[Auth]:
     Raises:
         StarsAPIError: If API request fails.
     """
-    settings = get_settings()
     resource_id = quote(person_id, safe="")
-    url = f"{settings.stars.uri}/eng/personnel/{resource_id}/auths"
+    url = f"{STARS_URI}/eng/personnel/{resource_id}/auths"
 
     # Get current authorisations
     params = {
@@ -154,8 +150,7 @@ def get_expiring_auths_by_date(unit_id: str, expiry_date: date) -> list[Auth]:
     Raises:
         StarsAPIError: If API request fails.
     """
-    settings = get_settings()
-    url = f"{settings.stars.uri}/eng/personnel/auths"
+    url = f"{STARS_URI}/eng/personnel/auths"
 
     params = {
         "view": "Expiring",

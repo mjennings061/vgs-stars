@@ -13,7 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.config import (  # noqa: E402  # pylint: disable=wrong-import-position
-    get_settings,
+    API_KEY_HEADER_NAME,
+    DATABASE_USERS_COLLECTION,
 )
 from app.models.user import (  # noqa: E402  # pylint: disable=wrong-import-position
     ApiUser,
@@ -28,7 +29,6 @@ from app.services import (  # noqa: E402  # pylint: disable=wrong-import-positio
 def create_user(name: str) -> None:
     """Generate (or replace) a user API key and print the plaintext key."""
 
-    settings = get_settings()
     # Use synchronous client for CLI script
     client = firestore.Client()
 
@@ -37,7 +37,7 @@ def create_user(name: str) -> None:
 
     user = ApiUser(name=name, api_key=key_hash)
 
-    col = client.collection(settings.database.users_collection)
+    col = client.collection(DATABASE_USERS_COLLECTION)
 
     # Check if user already exists
     query = col.where(filter=FieldFilter("name", "==", name)).limit(1)
@@ -58,7 +58,7 @@ def create_user(name: str) -> None:
         "it will not be shown again.\n"
     )
     click.echo(f"User   : {name}")
-    click.echo(f"Header : {settings.app.api_key_header_name}")
+    click.echo(f"Header : {API_KEY_HEADER_NAME}")
     click.echo(f"API key: {key_plain}\n")
 
 

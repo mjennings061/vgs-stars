@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import get_settings
+from app.config import EXPIRY_WARNING_DAYS, STARS_ORG_UNIT_ID
 from app.models.notifications import (
     AuthSummary,
     NotificationBatch,
@@ -204,13 +204,11 @@ async def list_expiring_auths(
     Raises:
         HTTPException: If the query fails.
     """
-    settings = get_settings()
-
     # Use defaults from config if not provided
     if unit_id is None:
-        unit_id = settings.stars.org_unit_id
+        unit_id = STARS_ORG_UNIT_ID
     if warning_days is None:
-        warning_days = settings.app.expiry_warning_days
+        warning_days = EXPIRY_WARNING_DAYS
 
     expiry_date = date.today() + timedelta(days=warning_days)
 

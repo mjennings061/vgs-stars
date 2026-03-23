@@ -8,7 +8,11 @@ import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from app.config import get_settings
+from app.config import (
+    CLOUD_TASKS_DISPATCH_DELAY_SECONDS,
+    EXPIRY_WARNING_DAYS,
+    STARS_ORG_UNIT_ID,
+)
 from app.models.notifications import (
     AuthSummary,
     Notification,
@@ -254,13 +258,11 @@ async def check_and_notify_expiring_auths(
     Returns:
         Dictionary with results summary including counts and errors.
     """
-    settings = get_settings()
-
     # Use defaults from config if not provided
     if unit_id is None:
-        unit_id = settings.stars.org_unit_id
+        unit_id = STARS_ORG_UNIT_ID
     if warning_days is None:
-        warning_days = settings.app.expiry_warning_days
+        warning_days = EXPIRY_WARNING_DAYS
 
     # Calculate expiry date threshold
     expiry_date = date.today() + timedelta(days=warning_days)
@@ -295,7 +297,7 @@ async def check_and_notify_expiring_auths(
             try:
                 # Stagger tasks to reduce concurrent email sends.
                 delay_seconds = (
-                    queue_position * settings.cloud_tasks.dispatch_delay_seconds
+                    queue_position * CLOUD_TASKS_DISPATCH_DELAY_SECONDS
                 )
                 success, error_msg = await _process_person_notification(
                     resource_id, person_auths, unit_id, delay_seconds
@@ -355,12 +357,10 @@ async def notify_expiring_auths_for_resource(
     Returns:
         Dictionary with results summary including counts and errors.
     """
-    settings = get_settings()
-
     if unit_id is None:
-        unit_id = settings.stars.org_unit_id
+        unit_id = STARS_ORG_UNIT_ID
     if warning_days is None:
-        warning_days = settings.app.expiry_warning_days
+        warning_days = EXPIRY_WARNING_DAYS
 
     expiry_date = date.today() + timedelta(days=warning_days)
     target_org_unit_id = str(unit_id) if unit_id is not None else None
