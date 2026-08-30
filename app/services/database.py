@@ -12,7 +12,11 @@ from google.cloud import firestore
 from google.cloud.firestore_v1 import FieldFilter
 from google.cloud.firestore_v1.async_client import AsyncClient
 
-from app.config import get_settings
+from app.config import (
+    DATABASE_NOTIFICATION_BATCHES_COLLECTION,
+    DATABASE_NOTIFICATIONS_COLLECTION,
+    DATABASE_USERS_COLLECTION,
+)
 from app.models.notifications import (
     Notification,
     NotificationBatch,
@@ -68,11 +72,10 @@ async def save_notification_with_batch(
     Returns:
         Tuple of (batch_id, list of notification_ids).
     """
-    settings = get_settings()
     client = get_client()
 
-    batch_col = get_collection(settings.database.notification_batches_collection)
-    notif_col = get_collection(settings.database.notifications_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
+    notif_col = get_collection(DATABASE_NOTIFICATIONS_COLLECTION)
 
     @firestore.async_transactional
     async def save_in_transaction(transaction):
@@ -114,8 +117,7 @@ async def save_notification_batch(batch: NotificationBatch) -> str:
     Returns:
         Inserted batch ID as a string.
     """
-    settings = get_settings()
-    batch_col = get_collection(settings.database.notification_batches_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
     batch_doc = batch.model_dump(by_alias=True, mode="json")
     doc_ref = batch_col.document()
     await doc_ref.set(batch_doc)
@@ -136,8 +138,7 @@ async def get_notification_batch(batch_id: str) -> dict[str, Any] | None:
     Returns:
         Batch document if found, otherwise None.
     """
-    settings = get_settings()
-    batch_col = get_collection(settings.database.notification_batches_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
     doc_ref = batch_col.document(batch_id)
     doc = await doc_ref.get()
 
@@ -161,8 +162,7 @@ async def get_pending_batch_for_user(
     Returns:
         Batch document if found, otherwise None.
     """
-    settings = get_settings()
-    batch_col = get_collection(settings.database.notification_batches_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
 
     query = batch_col.where(filter=FieldFilter("userId", "==", user_id)).where(
         filter=FieldFilter("status", "==", NotificationStatus.PENDING.value)
@@ -200,10 +200,9 @@ async def finalise_notification_batch(
         error: Error message to store on the batch, if any.
         notifications: Notification records to insert.
     """
-    settings = get_settings()
     client = get_client()
-    batch_col = get_collection(settings.database.notification_batches_collection)
-    notif_col = get_collection(settings.database.notifications_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
+    notif_col = get_collection(DATABASE_NOTIFICATIONS_COLLECTION)
 
     @firestore.async_transactional
     async def update_in_transaction(transaction):
@@ -243,8 +242,7 @@ async def update_notification_batch(
     Returns:
         True if the batch was matched and updated, otherwise False.
     """
-    settings = get_settings()
-    batch_col = get_collection(settings.database.notification_batches_collection)
+    batch_col = get_collection(DATABASE_NOTIFICATION_BATCHES_COLLECTION)
     doc_ref = batch_col.document(batch_id)
 
     doc = await doc_ref.get()
@@ -269,8 +267,7 @@ async def get_notifications_for_auth(auth_id: int) -> list[dict[str, Any]]:
     Returns:
         List of notification documents for this authorisation.
     """
-    settings = get_settings()
-    col = get_collection(settings.database.notifications_collection)
+    col = get_collection(DATABASE_NOTIFICATIONS_COLLECTION)
 
     query = col.where(filter=FieldFilter("authId", "==", auth_id))
 

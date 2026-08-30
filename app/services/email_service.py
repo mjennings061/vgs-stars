@@ -9,7 +9,7 @@ import logging
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Asm, Content, Email, Mail, To
 
-from app.config import get_settings
+from app.config import SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, SENDGRID_FROM_NAME
 from app.models.notifications import NotificationBatch
 
 logger = logging.getLogger(__name__)
@@ -159,8 +159,6 @@ def send_notification_email(batch: NotificationBatch) -> bool:
     Raises:
         EmailServiceError: If email sending fails.
     """
-    settings = get_settings()
-
     logger.info(
         "Sending notification email to %s for %d auths",
         batch.user_email,
@@ -172,7 +170,7 @@ def send_notification_email(batch: NotificationBatch) -> bool:
         html_content, plain_text = render_email_template(batch)
 
         # Create SendGrid mail object
-        from_email = Email(settings.email.from_email, settings.email.from_name)
+        from_email = Email(SENDGRID_FROM_EMAIL, SENDGRID_FROM_NAME)
         to_email = To(batch.user_email)
         subject = batch.subject
 
@@ -191,7 +189,7 @@ def send_notification_email(batch: NotificationBatch) -> bool:
         )
 
         # Send via SendGrid
-        sg = SendGridAPIClient(settings.email.api_key)
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(mail)
 
         if not 200 <= response.status_code < 300:

@@ -8,7 +8,12 @@ from typing import Any, Dict
 from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
 
-from app.config import get_settings
+from app.config import (
+    API_KEY_HEADER_NAME,
+    CLOUD_TASKS_API_KEY,
+    CLOUD_TASKS_QUEUE_PATH,
+    CLOUD_TASKS_TARGET_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,22 +28,17 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
     Returns:
         Cloud Tasks task name.
     """
-    settings = get_settings()
     client = tasks_v2.CloudTasksClient()
 
-    parent = settings.app.cloud_tasks_queue_path
-
-    # Include the API key header so Cloud Tasks can call protected endpoints.
-    header_name = settings.app.api_key_header_name
     headers = {
         "Content-Type": "application/json",
-        header_name: settings.cloud_tasks.api_key,
+        API_KEY_HEADER_NAME: CLOUD_TASKS_API_KEY,
     }
 
     task: Dict[str, Any] = {
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
-            "url": settings.cloud_tasks.target_url,
+            "url": CLOUD_TASKS_TARGET_URL,
             "headers": headers,
             "body": json.dumps({"batch_id": batch_id}).encode(),
         }
@@ -53,6 +53,6 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
         )
         task["schedule_time"] = timestamp
 
-    response = client.create_task(request={"parent": parent, "task": task})
+    response = client.create_task(request={"parent": CLOUD_TASKS_QUEUE_PATH, "task": task})
     logger.info("Queued task %s for batch %s", response.name, batch_id)
     return response.name
