@@ -344,8 +344,7 @@ async def notify_expiring_auths_for_resource(
 ) -> dict:
     """Send expiring authorisation notifications for a single resource.
 
-    This endpoint intentionally skips deduplication and persistence; it simply
-    checks the user's expiring auths and attempts to send one email.
+    Persists the batch and sends synchronously, skipping deduplication.
 
     Args:
         resource_id: STARS resource ID for the person (e.g., "R:125129").
@@ -360,8 +359,8 @@ async def notify_expiring_auths_for_resource(
     if warning_days is None:
         warning_days = EXPIRY_WARNING_DAYS
 
-    expiry_date = date.today() + timedelta(days=warning_days)
-    target_org_unit_id = str(unit_id) if unit_id is not None else None
+    today = date.today()
+    expiry_date = today + timedelta(days=warning_days)
 
     logger.info(
         "Checking expiring auths for %s before %s (unit %s)",
@@ -371,95 +370,52 @@ async def notify_expiring_auths_for_resource(
     )
 
     try:
-        # Fetch current auths for the user and filter by expiry threshold
-        user_auths = stars_client.get_eng_auths_for_user(resource_id)
+        # An auth's org unit is the issuing unit, so check the person's instead.
+        person = stars_client.get_person(resource_id)
+        if str(person.org_unit_id) != str(unit_id):
+            logger.error("Invalid unit ID %s. Expected %s", person.org_unit_id, unit_id)
+            raise ValueError("Invalid STARS unit ID set")
+
         expiring_auths = [
             auth
-            for auth in user_auths
-            if auth.expiry
-            and auth.expiry <= expiry_date
-            and (
-                target_org_unit_id is None
-                or str(auth.org_unit_id) == str(target_org_unit_id)
-            )
+            for auth in stars_client.get_eng_auths_for_user(resource_id)
+            if auth.expiry and auth.expiry <= expiry_date
         ]
-
         if not expiring_auths:
             logger.info("No expiring authorisations found for %s", resource_id)
-            return {
-                "success": True,
-                "notifications_sent": 0,
-                "notifications_failed": 0,
-                "summary": {
-                    "total_expiring_auths": 0,
-                    "users_notified": 0,
-                    "emails_sent": 0,
-                },
-                "errors": [],
-            }
+            return _create_empty_result()
 
-        user = stars_client.get_user_from_resource(resource_id)
-
-        today = date.today()
-        has_expired = any(
-            auth.expiry and auth.expiry < today for auth in expiring_auths
-        )
+        user = stars_client.get_user(person.user_id)
         notification_type = (
-            NotificationType.EXPIRED if has_expired else NotificationType.EXPIRING_SOON
+            NotificationType.EXPIRED
+            if any(auth.expiry and auth.expiry < today for auth in expiring_auths)
+            else NotificationType.EXPIRING_SOON
         )
-
-        # Create notification batch
         batch = create_notification_batch(
             resource_id, expiring_auths, user, notification_type
         )
 
-        notifications_sent = 0
-        notifications_failed = 0
-        errors: list[str] = []
-
-        # Send email
-        try:
-            email_service.send_notification_email(batch)
-            batch.status = NotificationStatus.SENT
-            batch.sent_at = datetime.now()
-            notifications_sent = 1
-            logger.info("Notification sent to %s for %s", user.email, resource_id)
-        except Exception as e:
-            batch.status = NotificationStatus.FAILED
-            batch.error = str(e)
-            notifications_failed = 1
-            errors.append(f"Failed to send email to {user.email}: {e}")
-            logger.error("Failed to send notification for %s: %s", resource_id, e)
-
-        # Intentionally skip database persistence for this ad-hoc endpoint
+        # Save first: the batch ID drives the unsubscribe link and headers.
+        batch_id = await database.save_notification_batch(batch)
+        await send_notification_batch(batch_id)
 
         return {
             "success": True,
-            "notifications_sent": notifications_sent,
-            "notifications_failed": notifications_failed,
+            "notifications_sent": 1,
+            "notifications_failed": 0,
             "summary": {
                 "total_expiring_auths": len(expiring_auths),
                 "users_notified": 1,
-                "emails_sent": notifications_sent,
+                "emails_sent": 1,
             },
-            "errors": errors,
+            "errors": [],
         }
 
     except Exception as e:
         logger.error(
             "Fatal error in single-user notification check: %s", e, exc_info=True
         )
-        return {
-            "success": False,
-            "notifications_sent": 0,
-            "notifications_failed": 0,
-            "summary": {
-                "total_expiring_auths": 0,
-                "users_notified": 0,
-                "emails_sent": 0,
-            },
-            "errors": [str(e)],
-        }
+        return _create_error_result(e)
 
 
 async def send_notification_batch(batch_id: str) -> dict:

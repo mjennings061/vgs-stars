@@ -1,6 +1,7 @@
 """Checks for email rendering and the unsubscribe link."""
 
 from datetime import date
+from unittest.mock import patch
 
 from app.models.notifications import AuthSummary, NotificationBatch, NotificationType
 from app.services import email_service
@@ -33,15 +34,21 @@ def test_names_from_stars_are_escaped():
     assert "X &lt; Y" in html_content
 
 
-def test_unsubscribe_link_only_when_url_given():
-    """No batch ID means no link, in both HTML and plain text."""
-    html_content, plain = email_service.render_email_template(_batch())
-    assert "Unsubscribe" not in html_content and "Unsubscribe" not in plain
+def test_unsubscribe_link_only_when_batch_id_given():
+    """A batch ID adds the link, the one-click headers and the idempotency key."""
+    with patch("app.services.email_service.resend.Emails.send") as send:
+        email_service.send_notification_email(_batch())
+        params, options = send.call_args[0]
+        assert "Unsubscribe" not in params["html"]
+        assert "Unsubscribe" not in params["text"]
+        assert "headers" not in params and options == {}
 
-    url = "https://example.com/unsubscribe/abc123"
-    html_content, plain = email_service.render_email_template(_batch(), url)
-    assert f'href="{url}"' in html_content
-    assert url in plain
+        email_service.send_notification_email(_batch(), batch_id="abc123")
+        params, options = send.call_args[0]
+        url = email_service.build_unsubscribe_url("abc123")
+        assert f'href="{url}"' in params["html"] and url in params["text"]
+        assert params["headers"]["List-Unsubscribe"] == f"<{url}>"
+        assert options["idempotency_key"] == "auth-expiry/abc123"
 
 
 def test_unsubscribe_url_uses_service_root():
