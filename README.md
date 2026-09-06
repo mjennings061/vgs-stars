@@ -122,11 +122,9 @@ curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
      --max-instances 1 \
      --concurrency 80 \
      --cpu-throttling \
-     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
+     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,DATABASE_NOTIFICATIONS_COLLECTION=auths_notification,DATABASE_NOTIFICATION_BATCHES_COLLECTION=auth_notification_batches,DATABASE_USERS_COLLECTION=users,CLOUD_TASKS_DISPATCH_DELAY_SECONDS=20,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
      --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,SENDGRID_API_KEY=sendgrid-api-key:latest,SENDGRID_FROM_EMAIL=sendgrid-from-email:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
    ```
-
-**Note:** `requirements.txt` is generated from `poetry.lock` and should not be committed to git. The Cloud Run buildpack needs this file to detect dependencies.
 
 ## External Scheduling
 
@@ -136,6 +134,34 @@ The API is designed to be triggered externally. Example schedulers:
 - **Azure Logic Apps** - Recurrence trigger calling the API
 - **AWS EventBridge + Lambda** - Scheduled Lambda invokes the API
 - **Cron job** - `curl` command in crontab
+
+## Alerting
+
+An email is sent to the owner whenever `vgs-stars-api` logs an error. Set up once with:
+
+```bash
+gcloud alpha monitoring channels create --project=vgs-stars-dev \
+  --display-name="STARS owner" --type=email \
+  --channel-labels=email_address=mjennings061@gmail.com
+
+gcloud alpha monitoring policies create --project=vgs-stars-dev --policy='
+displayName: vgs-stars-api errors
+combiner: OR
+conditions:
+- displayName: ERROR log entry
+  conditionMatchedLog:
+    filter: |
+      resource.type="cloud_run_revision"
+      resource.labels.service_name="vgs-stars-api"
+      severity>=ERROR
+alertStrategy:
+  notificationRateLimit:
+    period: 300s
+  autoClose: 1800s
+notificationChannels:
+- CHANNEL_NAME_FROM_PREVIOUS_COMMAND
+'
+```
 
 ## Managing Users
 
