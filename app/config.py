@@ -22,10 +22,9 @@ DATABASE_NOTIFICATION_BATCHES_COLLECTION = os.environ[
 ]
 DATABASE_USERS_COLLECTION = os.environ["DATABASE_USERS_COLLECTION"]
 
-# -- Email (SendGrid) ---------------------------------------------------------
-SENDGRID_API_KEY = os.environ["SENDGRID_API_KEY"]
-SENDGRID_FROM_EMAIL = os.environ["SENDGRID_FROM_EMAIL"]
-SENDGRID_FROM_NAME = os.environ["SENDGRID_FROM_NAME"]
+# -- Email (Resend) -----------------------------------------------------------
+RESEND_API_KEY = os.environ["RESEND_API_KEY"]
+EMAIL_FROM = os.environ["EMAIL_FROM"]
 
 # -- Application ---------------------------------------------------------------
 EXPIRY_WARNING_DAYS = int(os.environ["EXPIRY_WARNING_DAYS"])
@@ -68,8 +67,7 @@ def configure_logging() -> None:
                         "severity": record.levelname,
                         "message": record.getMessage(),
                         "name": record.name,
-                        "timestamp": dt.fromtimestamp(record.created).isoformat()
-                        + "Z",
+                        "timestamp": dt.fromtimestamp(record.created).isoformat() + "Z",
                     }
                     if record.exc_info:
                         log_entry["exc_info"] = self.formatException(record.exc_info)

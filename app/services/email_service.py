@@ -1,33 +1,48 @@
-"""Email service for sending authorisation expiry notifications via SendGrid.
+"""Email service for sending authorisation expiry notifications via Resend.
 
-Provides functions to send notification emails using the SendGrid API
+Provides functions to send notification emails using the Resend API
 with HTML and plain text templates.
 """
 
+import html
 import logging
+from urllib.parse import urljoin
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Asm, Content, Email, Mail, To
+import resend
 
-from app.config import SENDGRID_API_KEY, SENDGRID_FROM_EMAIL, SENDGRID_FROM_NAME
+from app.config import CLOUD_TASKS_TARGET_URL, EMAIL_FROM, RESEND_API_KEY
 from app.models.notifications import NotificationBatch
 
 logger = logging.getLogger(__name__)
 
-UNSUBSCRIBE_GROUP_ID = 27661
-# Preference center raw URL (two-step unsubscribe to avoid bot clicks)
-ASM_PREFERENCES_URL_TAG = "<%asm_preferences_raw_url%>"
+resend.api_key = RESEND_API_KEY
 
 
 class EmailServiceError(Exception):
     """Exception raised for email service errors."""
 
 
-def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
+def build_unsubscribe_url(batch_id: str) -> str:
+    """Build the unsubscribe URL for a notification batch.
+
+    Args:
+        batch_id: Notification batch ID, used as the unguessable token.
+
+    Returns:
+        Absolute URL to the unsubscribe endpoint.
+    """
+    # Cloud Tasks calls this same service, so its target URL gives us our own base.
+    return urljoin(CLOUD_TASKS_TARGET_URL, f"/unsubscribe/{batch_id}")
+
+
+def render_email_template(
+    batch: NotificationBatch, unsubscribe_url: str | None = None
+) -> tuple[str, str]:
     """Generate HTML and plain text email content from notification batch.
 
     Args:
         batch: NotificationBatch with authorisations to include.
+        unsubscribe_url: Link to include in the footer, if available.
 
     Returns:
         Tuple of (html_content, plain_text_content).
@@ -67,15 +82,17 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
             "Please renew your authorisations via your QESO.",
             "",
             "This is an automated notification from the 661 VGS STARS system.",
-            f"Manage preferences: {ASM_PREFERENCES_URL_TAG}",
-            "",
-            "https://github.com/mjennings061/vgs-stars",
         ]
     )
 
+    if unsubscribe_url:
+        plain_lines.append(f"Unsubscribe: {unsubscribe_url}")
+
+    plain_lines.extend(["", "https://github.com/mjennings061/vgs-stars"])
+
     plain_text = "\n".join(plain_lines)
 
-    # HTML version
+    # HTML version. Names come from STARS, so escape them.
     html_lines = [
         "<html>",
         "<head>",
@@ -91,7 +108,7 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
         "</style>",
         "</head>",
         "<body>",
-        f"<h2>Dear {batch.resource_name},</h2>",
+        f"<h2>Dear {html.escape(batch.resource_name)},</h2>",
         (
             f"<p>This is a notification that you have <strong>{len(batch.auths)}"
             "</strong> STARS authorisation(s) expiring soon.</p>"
@@ -120,23 +137,26 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
     for auth in sorted_auths:
         expiry_str = auth.expiry_date.strftime("%d %B %Y")
         html_lines.append("<tr>")
-        html_lines.append(f"<td>{auth.auth_name}</td>")
+        html_lines.append(f"<td>{html.escape(auth.auth_name)}</td>")
         html_lines.append(f"<td>{expiry_str}</td>")
         html_lines.append("</tr>")
 
-    footer_text = (
-        '<p class="footer">This is an automated notification from the '
-        '<a href="https://github.com/mjennings061/vgs-stars">'
-        "661 VGS STARS system</a>.<br>"
-        f'<a href="{ASM_PREFERENCES_URL_TAG}">Manage preferences</a>'
-        "</p>"
-    )
+    footer_parts = [
+        '<p class="footer">This is an automated notification from the ',
+        '<a href="https://github.com/mjennings061/vgs-stars">',
+        "661 VGS STARS system</a>.",
+    ]
+    if unsubscribe_url:
+        footer_parts.append(
+            f'<br><a href="{html.escape(unsubscribe_url)}">Unsubscribe</a>'
+        )
+    footer_parts.append("</p>")
 
     html_lines.extend(
         [
             "</table>",
             "<p>Please renew your authorisations via your QESO.</p>",
-            footer_text,
+            "".join(footer_parts),
             "</body>",
             "</html>",
         ]
@@ -147,14 +167,18 @@ def render_email_template(batch: NotificationBatch) -> tuple[str, str]:
     return html_content, plain_text
 
 
-def send_notification_email(batch: NotificationBatch) -> bool:
-    """Send batched notification email via SendGrid.
+def send_notification_email(
+    batch: NotificationBatch, batch_id: str | None = None
+) -> bool:
+    """Send batched notification email via Resend.
 
     Args:
         batch: NotificationBatch with user and authorisation details.
+        batch_id: Persisted batch ID. Enables the unsubscribe link and
+            de-duplicates Cloud Tasks retries.
 
     Returns:
-        True if email sent successfully, False otherwise.
+        True if email sent successfully.
 
     Raises:
         EmailServiceError: If email sending fails.
@@ -165,49 +189,35 @@ def send_notification_email(batch: NotificationBatch) -> bool:
         len(batch.auths),
     )
 
+    # Rendered outside the try so a template bug is not reported as a send failure.
+    unsubscribe_url = build_unsubscribe_url(batch_id) if batch_id else None
+    html_content, plain_text = render_email_template(batch, unsubscribe_url)
+
+    params: resend.Emails.SendParams = {
+        "from": EMAIL_FROM,
+        "to": [batch.user_email],
+        "subject": batch.subject,
+        "html": html_content,
+        "text": plain_text,
+    }
+
+    if unsubscribe_url:
+        # RFC 8058 one-click. POST is the endpoint that actually unsubscribes.
+        params["headers"] = {
+            "List-Unsubscribe": f"<{unsubscribe_url}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        }
+
+    # Idempotency key stops Cloud Tasks retries sending the email twice.
+    options: resend.Emails.SendOptions = (
+        {"idempotency_key": f"auth-expiry/{batch_id}"} if batch_id else {}
+    )
+
     try:
-        # Render email templates
-        html_content, plain_text = render_email_template(batch)
-
-        # Create SendGrid mail object
-        from_email = Email(SENDGRID_FROM_EMAIL, SENDGRID_FROM_NAME)
-        to_email = To(batch.user_email)
-        subject = batch.subject
-
-        # Create message with both HTML and plain text
-        mail = Mail(
-            from_email=from_email,
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=Content("text/plain", plain_text),
-            html_content=Content("text/html", html_content),
-        )
-
-        # Use preferences page (two-step) to avoid auto-unsub from link scanners
-        mail.asm = Asm(
-            group_id=UNSUBSCRIBE_GROUP_ID, groups_to_display=[UNSUBSCRIBE_GROUP_ID]
-        )
-
-        # Send via SendGrid
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        response = sg.send(mail)
-
-        if not 200 <= response.status_code < 300:
-            logger.error(
-                "Failed to send email to %s: %d - %s",
-                batch.user_email,
-                response.status_code,
-                response.body,
-            )
-            raise EmailServiceError(f"SendGrid returned status {response.status_code}")
-
-        logger.info(
-            "Email sent successfully to %s (status: %d)",
-            batch.user_email,
-            response.status_code,
-        )
-        return True
-
+        email = resend.Emails.send(params, options)
     except Exception as e:
         logger.error("Error sending email to %s: %s", batch.user_email, e)
         raise EmailServiceError(f"Failed to send email: {e}") from e
+
+    logger.info("Email sent to %s (id: %s)", batch.user_email, email.get("id"))
+    return True

@@ -29,7 +29,7 @@ This service provides a REST API that checks for expiring STARS authorisations a
 
    Edit `.env` and add your credentials:
    - STARS API credentials (URI and API key)
-   - SendGrid API key and sender email
+   - Resend API key and verified sending domain
    - Organisation unit ID and resource ID defaults
    - Google Cloud configuration for Firestore
 
@@ -122,8 +122,8 @@ curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
      --max-instances 1 \
      --concurrency 80 \
      --cpu-throttling \
-     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,SENDGRID_FROM_NAME=STARS Notifications,DATABASE_NOTIFICATIONS_COLLECTION=auths_notification,DATABASE_NOTIFICATION_BATCHES_COLLECTION=auth_notification_batches,DATABASE_USERS_COLLECTION=users,CLOUD_TASKS_DISPATCH_DELAY_SECONDS=20,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
-     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,SENDGRID_API_KEY=sendgrid-api-key:latest,SENDGRID_FROM_EMAIL=sendgrid-from-email:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
+     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,EMAIL_FROM=STARS Notifications <noreply@mail.mjennings.uk>,DATABASE_NOTIFICATIONS_COLLECTION=auths_notification,DATABASE_NOTIFICATION_BATCHES_COLLECTION=auth_notification_batches,DATABASE_USERS_COLLECTION=users,CLOUD_TASKS_DISPATCH_DELAY_SECONDS=20,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
+     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,RESEND_API_KEY=resend-api-key:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
    ```
 
 ## External Scheduling
