@@ -296,9 +296,7 @@ async def check_and_notify_expiring_auths(
         for resource_id, person_auths in auths_by_person.items():
             try:
                 # Stagger tasks to reduce concurrent email sends.
-                delay_seconds = (
-                    queue_position * CLOUD_TASKS_DISPATCH_DELAY_SECONDS
-                )
+                delay_seconds = queue_position * CLOUD_TASKS_DISPATCH_DELAY_SECONDS
                 success, error_msg = await _process_person_notification(
                     resource_id, person_auths, unit_id, delay_seconds
                 )
@@ -500,7 +498,7 @@ async def send_notification_batch(batch_id: str) -> dict:
     status = NotificationStatus.SENT
 
     try:
-        email_service.send_notification_email(batch)
+        email_service.send_notification_email(batch, batch_id=batch_id)
         logger.info("Notification sent to %s", batch.user_email)
     except Exception as e:
         status = NotificationStatus.FAILED

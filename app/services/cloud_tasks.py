@@ -53,6 +53,8 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
         )
         task["schedule_time"] = timestamp
 
-    response = client.create_task(request={"parent": CLOUD_TASKS_QUEUE_PATH, "task": task})
+    response = client.create_task(
+        request={"parent": CLOUD_TASKS_QUEUE_PATH, "task": task}
+    )
     logger.info("Queued task %s for batch %s", response.name, batch_id)
     return response.name

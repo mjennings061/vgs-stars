@@ -15,7 +15,6 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from app.config import (
     DATABASE_NOTIFICATION_BATCHES_COLLECTION,
     DATABASE_NOTIFICATIONS_COLLECTION,
-    DATABASE_USERS_COLLECTION,
 )
 from app.models.notifications import (
     Notification,

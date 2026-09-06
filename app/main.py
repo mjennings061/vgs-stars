@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import configure_logging
-from app.routes import auths, health
+from app.routes import auths, health, unsubscribe
 from app.security import verify_api_key
 from app.services import database
 
@@ -110,6 +110,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Register routers
 app.include_router(health.router)
 app.include_router(auths.router)
+app.include_router(unsubscribe.router)
 
 
 # Root endpoint
