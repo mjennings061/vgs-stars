@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          pipx install poetry==2.4.3
+          poetry install --with dev --no-root
+
+      # conftest.py sets every required env var, so no secrets are needed here
+      - name: Run pytest
+        run: poetry run pytest -q
