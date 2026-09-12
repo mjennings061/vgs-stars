@@ -10,7 +10,12 @@ from urllib.parse import urljoin
 
 import resend
 
-from app.config import CLOUD_TASKS_TARGET_URL, EMAIL_FROM, RESEND_API_KEY
+from app.config import (
+    CLOUD_TASKS_TARGET_URL,
+    EMAIL_FROM,
+    RESEND_API_KEY,
+    ROSTER_CODE_TTL_MINUTES,
+)
 from app.models.notifications import NotificationBatch
 
 logger = logging.getLogger(__name__)
@@ -220,4 +225,53 @@ def send_notification_email(
         raise EmailServiceError(f"Failed to send email: {e}") from e
 
     logger.info("Email sent to %s (id: %s)", batch.user_email, email.get("id"))
+    return True
+
+
+def send_signin_code_email(email_address: str, name: str, code: str) -> bool:
+    """Send a roster sign-in code via Resend.
+
+    Args:
+        email_address: Where to send the code.
+        name: Name of the person signing in.
+        code: The six-digit code.
+
+    Returns:
+        True if the email was sent successfully.
+
+    Raises:
+        EmailServiceError: If email sending fails.
+    """
+    logger.info("Sending roster sign-in code to %s", email_address)
+
+    safe_name = html.escape(name)
+    plain_text = (
+        f"Hello {name},\n\n"
+        f"Your roster sign-in code is {code}.\n\n"
+        f"It expires in {ROSTER_CODE_TTL_MINUTES} minutes and can only be used "
+        "once. If you did not ask to sign in, you can ignore this email.\n"
+    )
+    html_content = (
+        f"<p>Hello {safe_name},</p>"
+        f"<p>Your roster sign-in code is "
+        f'<strong style="font-size:1.5em;letter-spacing:0.15em">{code}</strong></p>'
+        f"<p>It expires in {ROSTER_CODE_TTL_MINUTES} minutes and can only be used "
+        "once. If you did not ask to sign in, you can ignore this email.</p>"
+    )
+
+    params: resend.Emails.SendParams = {
+        "from": EMAIL_FROM,
+        "to": [email_address],
+        "subject": f"Your roster sign-in code is {code}",
+        "html": html_content,
+        "text": plain_text,
+    }
+
+    try:
+        sent = resend.Emails.send(params)
+    except Exception as e:
+        logger.error("Error sending sign-in code to %s: %s", email_address, e)
+        raise EmailServiceError(f"Failed to send sign-in code: {e}") from e
+
+    logger.info("Sign-in code sent to %s (id: %s)", email_address, sent.get("id"))
     return True

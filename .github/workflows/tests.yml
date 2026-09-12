@@ -8,12 +8,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      FIRESTORE_EMULATOR_HOST: localhost:8080
+      GOOGLE_CLOUD_PROJECT: vgs-stars-test
+
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+
+      # The runner's apt gcloud disables components; this action ships an SDK that allows them.
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          install_components: cloud-firestore-emulator
+
+      # No credentials needed.
+      - name: Start Firestore emulator
+        run: |
+          # The emulator needs a 21+ JRE and the runner defaults to 17.
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          gcloud emulators firestore start \
+            --host-port="$FIRESTORE_EMULATOR_HOST" >/tmp/firestore.log 2>&1 &
+          timeout 90 bash -c \
+            'until (echo > /dev/tcp/localhost/8080) 2>/dev/null; do sleep 1; done'
 
       - name: Install dependencies
         run: |
@@ -23,3 +43,7 @@ jobs:
       # conftest.py sets every required env var, so no secrets are needed here
       - name: Run pytest
         run: poetry run pytest -q
+
+      - name: Emulator log
+        if: failure()
+        run: cat /tmp/firestore.log

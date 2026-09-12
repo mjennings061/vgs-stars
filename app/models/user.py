@@ -12,6 +12,9 @@ class ApiUser(BaseModel):
 
     name: str = Field(..., description="User name/label for API access")
     api_key: str = Field(..., description="SHA-256 hash of the API key")
+    scopes: list[str] = Field(
+        ..., description="Permissions this key carries, e.g. stars, roster:read"
+    )
     created_at: datetime = Field(
         default_factory=datetime.now,
         alias="createdAt",

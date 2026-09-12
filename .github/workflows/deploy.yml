@@ -64,3 +64,11 @@ jobs:
             --cpu-throttling \
             --env-vars-file deploy/env-dev.yaml \
             --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,RESEND_API_KEY=resend-api-key:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
+
+      # Proves the new revision boots and reaches real Firestore with real credentials.
+      - name: Smoke
+        run: |
+          URL="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --format 'value(status.url)')"
+          curl -fsS --retry 5 --retry-delay 5 --retry-connrefused "$URL/health/ready"

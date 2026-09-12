@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.config import (  # noqa: E402  # pylint: disable=wrong-import-position
     API_KEY_HEADER_NAME,
     DATABASE_USERS_COLLECTION,
+    SCOPE_STARS,
 )
 from app.models.user import (  # noqa: E402  # pylint: disable=wrong-import-position
     ApiUser,
@@ -26,7 +27,14 @@ from app.services import (  # noqa: E402  # pylint: disable=wrong-import-positio
 
 @click.command()
 @click.option("--name", prompt="User name", help="Name for the API user")
-def create_user(name: str) -> None:
+@click.option(
+    "--scope",
+    "scopes",
+    multiple=True,
+    default=(SCOPE_STARS,),
+    help="Permission this key carries. Repeat for several.",
+)
+def create_user(name: str, scopes: tuple[str, ...]) -> None:
     """Generate (or replace) a user API key and print the plaintext key."""
 
     # Use synchronous client for CLI script
@@ -35,7 +43,7 @@ def create_user(name: str) -> None:
     key_plain = secrets.token_urlsafe(32)
     key_hash = api_keys.hash_api_key(key_plain)
 
-    user = ApiUser(name=name, api_key=key_hash)
+    user = ApiUser(name=name, api_key=key_hash, scopes=list(scopes))
 
     col = client.collection(DATABASE_USERS_COLLECTION)
 
@@ -58,6 +66,7 @@ def create_user(name: str) -> None:
         "it will not be shown again.\n"
     )
     click.echo(f"User   : {name}")
+    click.echo(f"Scopes : {', '.join(scopes)}")
     click.echo(f"Header : {API_KEY_HEADER_NAME}")
     click.echo(f"API key: {key_plain}\n")
 
