@@ -138,6 +138,12 @@ async def root(_: dict = Depends(require_scope(SCOPE_STARS))):
             "roster_verify_code": "POST /roster/auth/verify-code",
             "roster_me": "GET /roster/auth/me",
             "roster_logout": "POST /roster/auth/logout",
+            "roster_people": "GET /roster/people",
+            "roster_months": "GET /roster/months",
+            "roster_create_month": "POST /roster/months",
+            "roster_month": "GET /roster/months/{month}",
+            "roster_month_dates": "PATCH /roster/months/{month}/dates",
+            "roster_month_freeze": "PATCH /roster/months/{month}/freeze",
             "docs": "/docs",
         },
     }

@@ -202,3 +202,75 @@ def get_user_from_resource(person_id: str) -> User:
 
     logger.debug("Retrieved user %s from resource %s", user.email, person_id)
     return user
+
+
+def get_people_for_unit(unit_id: str) -> list[Person]:
+    """Retrieve every person on a unit, with the fields the roster needs.
+
+    Args:
+        unit_id: Organisation unit ID.
+
+    Returns:
+        List of Person objects for the unit, empty if it has nobody on it.
+
+    Raises:
+        StarsAPIError: If either API request fails.
+    """
+    url = f"{STARS_URI}/person/personnel"
+
+    logger.info("Fetching people for unit %s", unit_id)
+
+    try:
+        # The parameter is orgUnitID; STARS answers orgUnitId with a 405.
+        listing = requests.get(
+            url, params={"orgUnitID": unit_id}, headers=auth_header(), timeout=30
+        )
+        listing.raise_for_status()
+        ids = [person["id"] for person in listing.json().get("data", [])]
+        if not ids:
+            logger.warning("No people found for unit %s", unit_id)
+            return []
+
+        # ponytail: one batched call, fine for a squadron, split it past ~500 ids.
+        detail = requests.get(
+            url, params={"ids": ",".join(ids)}, headers=auth_header(), timeout=60
+        )
+        detail.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Failed to fetch people for unit %s: %s", unit_id, e)
+        raise StarsAPIError(f"Failed to fetch unit personnel: {e}") from e
+
+    people = [Person(**person) for person in detail.json().get("data", [])]
+    logger.info("Retrieved %d people for unit %s", len(people), unit_id)
+    return people
+
+
+def get_users(user_ids: list[str]) -> list[User]:
+    """Retrieve several user accounts at once, for their email addresses.
+
+    Args:
+        user_ids: STARS user IDs (UUID format).
+
+    Returns:
+        List of User objects, which may be shorter than the ids asked for.
+
+    Raises:
+        StarsAPIError: If the API request fails.
+    """
+    if not user_ids:
+        return []
+
+    url = f"{STARS_URI}/user/users/"
+
+    try:
+        response = requests.get(
+            url, params={"ids": ",".join(user_ids)}, headers=auth_header(), timeout=60
+        )
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Failed to fetch %d users: %s", len(user_ids), e)
+        raise StarsAPIError(f"Failed to fetch user data: {e}") from e
+
+    users = [User(**user) for user in response.json().get("data", [])]
+    logger.debug("Retrieved %d of %d users", len(users), len(user_ids))
+    return users

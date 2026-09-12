@@ -47,6 +47,9 @@ line_length = 88
 
 [tool.pylint.main]
 py-version = "3.14"
+# pylint puts only the linted file's own directory on sys.path, so scripts/
+# cannot see app/ without this. pre-commit lints one file at a time.
+source-roots = ["."]
 
 [tool.pylint.format]
 max-line-length = 88

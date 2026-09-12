@@ -8,80 +8,26 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import requests
-from fastapi.testclient import TestClient
-from google.cloud import firestore
 
 from app.config import (
     DATABASE_USERS_COLLECTION,
     ROSTER_CODES_COLLECTION,
-    ROSTER_PEOPLE_COLLECTION,
     ROSTER_REMEMBER_DEVICE_DAYS,
     ROSTER_SESSION_HOURS,
-    SCOPE_ROSTER_READ,
     SCOPE_STARS,
-    STARS_ORG_UNIT_ID,
 )
-from app.main import app
 from app.services import api_keys
+from tests.conftest import ADMIN_ID as PERSON_ID
+from tests.conftest import HEADERS
 
-pytestmark = pytest.mark.skipif(
-    "FIRESTORE_EMULATOR_HOST" not in os.environ,
-    reason="needs the Firestore emulator: gcloud emulators firestore start",
-)
-
-READ_KEY = "test-roster-read-key"
-HEADERS = {"X-API-Key": READ_KEY}
-PERSON_ID = "p-1043"
-
-
-def _wipe() -> None:
-    """Drop every document in the emulator."""
-    requests.delete(
-        f"http://{os.environ['FIRESTORE_EMULATOR_HOST']}/emulator/v1"
-        f"/projects/{os.environ['GOOGLE_CLOUD_PROJECT']}"
-        "/databases/(default)/documents",
-        timeout=10,
-    )
-
-
-@pytest.fixture(autouse=True)
-def seed():
-    """Reset the emulator and seed a read key and one person."""
-    _wipe()
-    client = firestore.Client()
-    client.collection(DATABASE_USERS_COLLECTION).document("read-key").set(
-        {
-            "name": "dashboard",
-            "api_key": api_keys.hash_api_key(READ_KEY),
-            "scopes": [SCOPE_ROSTER_READ],
-        }
-    )
-    client.collection(ROSTER_PEOPLE_COLLECTION).document(
-        f"{STARS_ORG_UNIT_ID}:{PERSON_ID}"
-    ).set(
-        {
-            "squadronId": STARS_ORG_UNIT_ID,
-            "personId": PERSON_ID,
-            "name": "J Doe",
-            "email": "jdoe@example.com",
-            "role": "admin",
-        }
-    )
-    return client
-
-
-@pytest.fixture
-def sent(mocker):
-    """Patch Resend so no test can ever send an email."""
-    return mocker.patch("app.services.email_service.resend.Emails.send")
-
-
-@pytest.fixture
-def client():
-    """A context-managed client, so one event loop serves the whole flow."""
-    with TestClient(app) as test_client:
-        yield test_client
+pytestmark = [
+    pytest.mark.skipif(
+        "FIRESTORE_EMULATOR_HOST" not in os.environ,
+        reason="needs the Firestore emulator: gcloud emulators firestore start",
+    ),
+    # Every test here wants the seeded key and people, as the old autouse did.
+    pytest.mark.usefixtures("seed"),
+]
 
 
 def _request_code(client, person_id: str = PERSON_ID):

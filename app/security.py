@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import API_KEY_HEADER_NAME
+from app.models.roster import Role
 from app.services import api_keys, roster_auth
 
 logger = logging.getLogger(__name__)
@@ -124,3 +125,23 @@ async def verify_session(
 
     # The route needs the plain token to delete exactly this session on logout.
     return {**session, "token": credentials.credentials}
+
+
+async def require_admin(session: dict = Depends(verify_session)) -> dict:
+    """Reject a signed-in person who is not an admin.
+
+    Args:
+        session: The caller's resolved session.
+
+    Returns:
+        The session record, so the route can log who acted.
+
+    Raises:
+        HTTPException: 403 if the person is signed in but not an admin.
+    """
+    if session.get("role") != Role.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins only",
+        )
+    return session

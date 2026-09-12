@@ -1,5 +1,8 @@
 [MASTER]
 extension-pkg-whitelist=pydantic
+# pylint only puts the linted file's own directory on sys.path, so scripts/
+# cannot see app/ when pre-commit lints one file at a time.
+source-roots=.
 
 [MESSAGES CONTROL]
 # Disable false positives and intentional design choices:

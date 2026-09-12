@@ -1,6 +1,6 @@
 """Pydantic models for roster documents stored in Firestore."""
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,6 +26,10 @@ class RosterPerson(BaseModel):
     person_id: str
     name: str
     email: str | None = None
+    # Field names match stars.Person, so the sync job is a straight copy.
+    initials: str | None = None
+    rank: str | None = None
+    instruct_cat: str | None = None
     role: Role = Role.MEMBER
 
 
@@ -52,3 +56,16 @@ class RosterSession(BaseModel):
     name: str
     role: Role = Role.MEMBER
     expires_at: datetime
+
+
+class RosterMonth(BaseModel):
+    """A month of flying dates, keyed in Firestore by ``{squadronId}:{month}``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    month: str = Field(..., description="Year and month, as 2026-11")
+    dates: list[date] = Field(default_factory=list)
+    freeze_at: date
+
+    # No frozen flag. It is computed from freeze_at, never stored.
