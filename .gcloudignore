@@ -10,3 +10,5 @@ README.md
 poetry.lock
 .vscode/
 .claude/
+.github/
+deploy/

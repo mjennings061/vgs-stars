@@ -1,0 +1,10 @@
+# Runtime environment for vgs-stars-api. Replaces all env vars on deploy.
+EXPIRY_WARNING_DAYS: "30"
+LOG_LEVEL: "INFO"
+API_KEY_HEADER_NAME: "X-API-Key"
+EMAIL_FROM: "STARS Notifications <noreply@mail.mjennings.uk>"
+DATABASE_NOTIFICATIONS_COLLECTION: "auths_notification"
+DATABASE_NOTIFICATION_BATCHES_COLLECTION: "auth_notification_batches"
+DATABASE_USERS_COLLECTION: "users"
+CLOUD_TASKS_DISPATCH_DELAY_SECONDS: "20"
+CLOUD_TASKS_TARGET_URL: "https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification"
