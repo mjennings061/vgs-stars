@@ -1,0 +1,62 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vgs-stars-api
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: vgs-stars-dev
+  SERVICE: vgs-stars-api
+  REGION: europe-west2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # ponytail: requirements.txt is gitignored, but buildpacks detect Python by it
+      - name: Export requirements.txt
+        run: |
+          pipx install poetry==2.4.3
+          pipx inject poetry poetry-plugin-export
+          poetry export -f requirements.txt -o requirements.txt --without-hashes
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/746685680538/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-deployer@vgs-stars-dev.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # Secret values stay in Secret Manager, only the names appear here
+      - name: Deploy
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 300 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --concurrency 80 \
+            --cpu-throttling \
+            --env-vars-file deploy/env-dev.yaml \
+            --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,RESEND_API_KEY=resend-api-key:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"

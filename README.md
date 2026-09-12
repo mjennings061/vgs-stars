@@ -97,34 +97,9 @@ curl -X POST http://localhost:8000/auths/notify-auth-expiry/user \
   -d '{"resource_id": "R:XXXXX", "warning_days": 30}'
 ```
 
-## Deployment to Google Cloud Run
+## Deployment
 
-### Build and Deploy
-
-1. **Generate requirements.txt** (required for Cloud Run buildpacks):
-
-   ```bash
-   poetry export -f requirements.txt -o requirements.txt --without-hashes
-   ```
-
-2. **Deploy to Cloud Run**:
-
-   ```bash
-   gcloud run deploy vgs-stars-api \
-     --source . \
-     --region europe-west2 \
-     --platform managed \
-     --allow-unauthenticated \
-     --memory 512Mi \
-     --cpu 1 \
-     --timeout 300 \
-     --min-instances 0 \
-     --max-instances 1 \
-     --concurrency 80 \
-     --cpu-throttling \
-     --set-env-vars "EXPIRY_WARNING_DAYS=30,LOG_LEVEL=INFO,API_KEY_HEADER_NAME=X-API-Key,EMAIL_FROM=STARS Notifications <noreply@mail.mjennings.uk>,DATABASE_NOTIFICATIONS_COLLECTION=auths_notification,DATABASE_NOTIFICATION_BATCHES_COLLECTION=auth_notification_batches,DATABASE_USERS_COLLECTION=users,CLOUD_TASKS_DISPATCH_DELAY_SECONDS=20,CLOUD_TASKS_TARGET_URL=https://vgs-stars-api-746685680538.europe-west2.run.app/auths/send_notification" \
-     --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,RESEND_API_KEY=resend-api-key:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
-   ```
+Merging to `main` deploys to Cloud Run via `.github/workflows/deploy.yml`; runtime config lives in `deploy/env-dev.yaml`.
 
 ## External Scheduling
 
