@@ -10,9 +10,9 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.config import configure_logging
-from app.routes import auths, health, unsubscribe
-from app.security import verify_api_key
+from app.config import SCOPE_STARS, configure_logging
+from app.routes import auths, health, roster, unsubscribe
+from app.security import require_scope
 from app.services import database
 
 # Configure logging as early as possible.
@@ -111,11 +111,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(health.router)
 app.include_router(auths.router)
 app.include_router(unsubscribe.router)
+app.include_router(roster.router)
 
 
 # Root endpoint
 @app.get("/")
-async def root(_: dict = Depends(verify_api_key)):
+async def root(_: dict = Depends(require_scope(SCOPE_STARS))):
     """Root endpoint with API information.
 
     Returns:
@@ -133,6 +134,10 @@ async def root(_: dict = Depends(verify_api_key)):
             "send_notification": "POST /auths/send_notification",
             "list_expiring": "GET /auths/expiring",
             "test_email": "POST /auths/test-email",
+            "roster_request_code": "POST /roster/auth/request-code",
+            "roster_verify_code": "POST /roster/auth/verify-code",
+            "roster_me": "GET /roster/auth/me",
+            "roster_logout": "POST /roster/auth/logout",
             "docs": "/docs",
         },
     }

@@ -73,10 +73,16 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger documen
 
 ## Testing
 
-Run the functional tests:
+```bash
+poetry run pytest
+```
+
+The roster sign-in tests run against the Firestore emulator and **skip** without:
 
 ```bash
-poetry run pytest tests/test_functional.py -v
+gcloud components install cloud-firestore-emulator   # once
+gcloud emulators firestore start --host-port=localhost:8080 &
+FIRESTORE_EMULATOR_HOST=localhost:8080 poetry run pytest
 ```
 
 ## Usage Example

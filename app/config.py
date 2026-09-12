@@ -39,6 +39,21 @@ CLOUD_TASKS_DISPATCH_DELAY_SECONDS = int(
     os.environ["CLOUD_TASKS_DISPATCH_DELAY_SECONDS"]
 )
 
+# -- Roster --------------------------------------------------------------------
+ROSTER_PEOPLE_COLLECTION = "roster_people"
+ROSTER_CODES_COLLECTION = "roster_codes"
+ROSTER_SESSIONS_COLLECTION = "roster_sessions"
+ROSTER_CODE_REQUESTS_COLLECTION = "roster_code_requests"
+ROSTER_CODE_TTL_MINUTES = 30
+ROSTER_CODE_MAX_ATTEMPTS = 5
+ROSTER_CODE_REQUESTS_PER_HOUR = 3
+ROSTER_SESSION_HOURS = 12
+ROSTER_REMEMBER_DEVICE_DAYS = 30
+
+# Scopes carried by API key records.
+SCOPE_STARS = "stars"
+SCOPE_ROSTER_READ = "roster:read"
+
 
 def configure_logging() -> None:
     """Configure application logging.

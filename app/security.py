@@ -2,11 +2,11 @@
 
 import logging
 
-from fastapi import HTTPException, Request, Security, status
-from fastapi.security import APIKeyHeader
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import API_KEY_HEADER_NAME
-from app.services import api_keys
+from app.services import api_keys, roster_auth
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,83 @@ async def verify_api_key(
             headers={"WWW-Authenticate": "API-Key"},
         ) from exc
 
-    if not record:
+    # A key with no scopes is refused everywhere rather than assumed harmless.
+    if not record or not record.get("scopes"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
             headers={"WWW-Authenticate": "API-Key"},
         )
 
-    return {"source": "firestore", "name": record.get("name")}
+    return {
+        "source": "firestore",
+        "name": record.get("name"),
+        "scopes": record["scopes"],
+    }
+
+
+def require_scope(scope: str):
+    """Build a dependency that requires an API key carrying a scope.
+
+    Args:
+        scope: Scope the caller's key must list.
+
+    Returns:
+        A FastAPI dependency yielding the caller record.
+    """
+
+    async def dependency(caller: dict = Depends(verify_api_key)) -> dict:
+        """Reject a valid key that is not allowed to do this."""
+        if scope not in caller["scopes"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient scope",
+            )
+        return caller
+
+    return dependency
+
+
+bearer_scheme = HTTPBearer(
+    description="Roster session token from sign-in",
+    auto_error=False,
+)
+
+
+async def verify_session(
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+) -> dict:
+    """Resolve a roster session from the Authorization header.
+
+    Args:
+        credentials: Bearer credentials parsed from the request.
+
+    Returns:
+        The session record, including person, name and role.
+
+    Raises:
+        HTTPException: 401 if the token is absent, unknown or expired.
+    """
+    unauthorised = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sign-in required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if not credentials:
+        raise unauthorised
+
+    try:
+        session = await roster_auth.resolve_session(credentials.credentials)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.error("Session lookup failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication unavailable",
+        ) from exc
+
+    if session is None:
+        raise unauthorised
+
+    # The route needs the plain token to delete exactly this session on logout.
+    return {**session, "token": credentials.credentials}

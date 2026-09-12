@@ -9,14 +9,14 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import EXPIRY_WARNING_DAYS, STARS_ORG_UNIT_ID
+from app.config import EXPIRY_WARNING_DAYS, SCOPE_STARS, STARS_ORG_UNIT_ID
 from app.models.notifications import (
     AuthSummary,
     NotificationBatch,
     NotificationStatus,
     NotificationType,
 )
-from app.security import verify_api_key
+from app.security import require_scope
 from app.services import email_service, notification_service, stars_client
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/auths",
     tags=["authorisations"],
-    dependencies=[Depends(verify_api_key)],
+    dependencies=[Depends(require_scope(SCOPE_STARS))],
 )
 
 
