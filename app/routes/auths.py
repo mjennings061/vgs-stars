@@ -144,7 +144,7 @@ async def notify_auth_expiry_for_user(
 ) -> NotifyAuthExpiryResponse:
     """Send expiry notifications for a single user (RPC pattern).
 
-    This endpoint skips deduplication and does not persist notification batches.
+    This endpoint persists the batch and sends synchronously, skipping dedup.
 
     Args:
         request: Resource ID plus optional parameters (unit_id, warning_days).
@@ -181,8 +181,8 @@ async def notify_auth_expiry_for_user(
         raise HTTPException(
             status_code=500,
             detail=(
-                "Failed to process authorisation expiry notification for",
-                f"{request.resource_id}: {str(e)}",
+                "Failed to process authorisation expiry notification for "
+                f"{request.resource_id}: {str(e)}"
             ),
         ) from e
 
