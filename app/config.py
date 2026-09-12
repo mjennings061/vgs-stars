@@ -44,11 +44,16 @@ ROSTER_PEOPLE_COLLECTION = "roster_people"
 ROSTER_CODES_COLLECTION = "roster_codes"
 ROSTER_SESSIONS_COLLECTION = "roster_sessions"
 ROSTER_CODE_REQUESTS_COLLECTION = "roster_code_requests"
+ROSTER_MONTHS_COLLECTION = "roster_months"
 ROSTER_CODE_TTL_MINUTES = 30
 ROSTER_CODE_MAX_ATTEMPTS = 5
 ROSTER_CODE_REQUESTS_PER_HOUR = 3
 ROSTER_SESSION_HOURS = 12
 ROSTER_REMEMBER_DEVICE_DAYS = 30
+ROSTER_FREEZE_DAYS = 14
+
+# The squadron flies to UK local time, and Cloud Run runs in UTC.
+ROSTER_TIMEZONE = "Europe/London"
 
 # Scopes carried by API key records.
 SCOPE_STARS = "stars"

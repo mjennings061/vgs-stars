@@ -71,6 +71,30 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger documen
 - `POST /auths/test-email` - Send a test notification email (for debugging)
   - Body: `{"email": "test@example.com", "resource_id": "string"}`
 
+## Roster
+
+Who is available to fly on which weekend, replacing the availability
+spreadsheet. `roster-pds.md` says how it should behave and
+`roster-api-contract.md` lists the endpoints.
+
+### First-time setup
+
+The roster shows nobody until you copy the squadron over from STARS:
+
+```bash
+set -a; . ./.env; set +a
+poetry run python scripts/roster_people.py
+```
+
+The first line loads your `.env`, which the script needs and does not read on
+its own. The script then copies everyone in your unit, along with their rank,
+initials and instructor category. Run it again whenever people join or leave.
+
+Next, choose who can run the roster. In the Firestore console, open the
+`roster_people` collection and set `role` to `admin` on each of them. Admins
+are the only ones who can create a month, change its dates, or set someone
+else's availability. Running the script again will not undo this.
+
 ## Testing
 
 ```bash
