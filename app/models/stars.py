@@ -57,7 +57,6 @@ class Person(BaseModel):
     instruct_cat: str | None = Field(default=None, alias="instructCat")
     callsign: str | None = None
     ability: str | None = None
-    tier: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
