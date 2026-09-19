@@ -109,6 +109,20 @@ gcloud emulators firestore start --host-port=localhost:8080 &
 FIRESTORE_EMULATOR_HOST=localhost:8080 poetry run pytest
 ```
 
+### End-to-end
+
+`tests/test_e2e.py` hits a **deployed** service and **skips** without its env
+vars. It runs after every deploy, and by hand with:
+
+```bash
+export E2E_BASE_URL="$(gcloud run services describe vgs-stars-api \
+  --project vgs-stars-dev --region europe-west2 --format 'value(status.url)')"
+export E2E_ROSTER_KEY=...          # a key scoped roster:read
+export STARS_ORG_UNIT_ID=...       # same value as the deployed service
+export GOOGLE_CLOUD_PROJECT=vgs-stars-dev
+poetry run pytest tests/test_e2e.py -v
+```
+
 ## Usage Example
 
 Trigger a notification check:
