@@ -8,7 +8,12 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.config import ROSTER_MONTHS_COLLECTION, STARS_ORG_UNIT_ID
+from app.config import (
+    ROSTER_AVAILABILITY_COLLECTION,
+    ROSTER_CHANGES_COLLECTION,
+    ROSTER_MONTHS_COLLECTION,
+    STARS_ORG_UNIT_ID,
+)
 from tests.conftest import (
     ADMIN_ID,
     ADMIN_NAME,
@@ -110,6 +115,7 @@ def test_grid_lists_everyone_even_before_anyone_answers(client):
     assert body["frozen"] is False
     assert [row["name"] for row in body["rows"]] == [MEMBER_NAME, ADMIN_NAME]
     assert all(row["entries"] == {} for row in body["rows"])
+    assert all(row["pending"] == {} for row in body["rows"])
 
 
 def test_grid_needs_a_key(client):
@@ -196,7 +202,7 @@ def test_changing_an_answer_after_the_freeze_is_refused(
     client, frozen_month, member_auth
 ):
     """The month is published, so an answer only moves with an admin's say-so."""
-    frozen_month.collection("roster_availability").document(
+    frozen_month.collection(ROSTER_AVAILABILITY_COLLECTION).document(
         f"{STARS_ORG_UNIT_ID}:{MONTH}:{MEMBER_ID}"
     ).set(
         {
@@ -225,7 +231,7 @@ def test_changing_an_answer_after_the_freeze_is_refused(
 @pytest.mark.usefixtures("frozen_month")
 def test_an_admin_still_writes_after_the_freeze(client, admin_auth):
     """Somebody has to be able to fix the grid on the Friday night."""
-    _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y")
+    assert _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y").status_code == 200
 
     assert _set(client, admin_auth, MEMBER_ID, SATURDAY, "N").status_code == 200
     assert _row(client, MEMBER_ID)["entries"][SATURDAY]["status"] == "N"
@@ -235,3 +241,38 @@ def test_an_admin_still_writes_after_the_freeze(client, admin_auth):
 def test_a_made_up_status_is_refused(client, member_auth):
     """Blank is the absence of an entry, never a fourth value."""
     assert _set(client, member_auth, MEMBER_ID, SATURDAY, "maybe").status_code == 422
+
+
+def test_an_overwritten_answer_stays_on_the_record(client, open_month, member_auth):
+    """The grid keeps the latest answer; the change log keeps both."""
+    _set(client, member_auth, MEMBER_ID, SATURDAY, "Y")
+    _set(client, member_auth, MEMBER_ID, SATURDAY, "N", comment="Work")
+
+    rows = sorted(
+        (
+            doc.to_dict()
+            for doc in open_month.collection(ROSTER_CHANGES_COLLECTION).stream()
+        ),
+        key=lambda row: row["updatedAt"],
+    )
+    assert [row["toStatus"] for row in rows] == ["Y", "N"]
+    assert [row["updatedBy"] for row in rows] == [MEMBER_ID, MEMBER_ID]
+    assert _row(client, MEMBER_ID)["entries"][SATURDAY]["status"] == "N"
+
+
+@pytest.mark.usefixtures("open_month")
+def test_a_comment_longer_than_the_limit_is_refused(client, member_auth):
+    """The reason is shown to the whole squadron, so it stays a sentence."""
+    response = _set(client, member_auth, MEMBER_ID, SATURDAY, "N", comment="x" * 201)
+    assert response.status_code == 422
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_a_frozen_month_says_so_on_the_grid(client):
+    """The lock and the date it froze on both come from this one call."""
+    response = client.get(f"/roster/months/{MONTH}/grid", headers=HEADERS)
+    assert response.status_code == 200, response.text
+
+    body = response.json()
+    assert body["frozen"] is True
+    assert body["freezeAt"] == (date.today() - timedelta(days=1)).isoformat()

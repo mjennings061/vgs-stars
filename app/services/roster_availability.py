@@ -1,13 +1,14 @@
 """Who said what about each flying date, one document per person per month."""
 
-import logging
 from urllib.parse import quote
 
-from app.config import ROSTER_AVAILABILITY_COLLECTION, STARS_ORG_UNIT_ID
+from app.config import (
+    ROSTER_AVAILABILITY_COLLECTION,
+    ROSTER_CHANGES_COLLECTION,
+    STARS_ORG_UNIT_ID,
+)
 from app.models.roster import RosterAvailability, RosterEntry
 from app.services import database
-
-logger = logging.getLogger(__name__)
 
 
 def _key(month: str, person_id: str) -> str:
@@ -73,4 +74,19 @@ async def set_entry(month: str, person_id: str, day: str, entry: RosterEntry) ->
     await col.document(_key(month, person_id)).set(
         record.model_dump(by_alias=True, mode="json"), merge=True
     )
-    logger.info("Availability set for person %s on %s", person_id, day)
+
+    # Appended, never updated, so an overwritten answer stays on the record.
+    await database.get_collection(ROSTER_CHANGES_COLLECTION).add(
+        {
+            "squadronId": STARS_ORG_UNIT_ID,
+            "month": month,
+            "personId": person_id,
+            "date": day,
+            "toStatus": entry.status.value,
+            "reason": entry.comment,
+            "state": "approved",
+            "updatedBy": entry.updated_by,
+            "updatedByName": entry.updated_by_name,
+            "updatedAt": entry.updated_at.isoformat(),
+        }
+    )

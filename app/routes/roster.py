@@ -450,6 +450,7 @@ class GridResponse(BaseModel):
 
     month: str
     dates: list[date]
+    freeze_at: date
     frozen: bool
     rows: list[GridRow]
 
@@ -499,6 +500,7 @@ async def read_grid(month: str) -> GridResponse:
     return GridResponse(
         month=record.month,
         dates=record.dates,
+        freeze_at=record.freeze_at,
         frozen=roster_months.is_frozen(record.freeze_at),
         rows=[
             GridRow(

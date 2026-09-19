@@ -144,6 +144,8 @@ async def root(_: dict = Depends(require_scope(SCOPE_STARS))):
             "roster_month": "GET /roster/months/{month}",
             "roster_month_dates": "PATCH /roster/months/{month}/dates",
             "roster_month_freeze": "PATCH /roster/months/{month}/freeze",
+            "roster_grid": "GET /roster/months/{month}/grid",
+            "roster_set_entry": "PUT /roster/months/{month}/people/{person_id}/{day}",
             "docs": "/docs",
         },
     }
