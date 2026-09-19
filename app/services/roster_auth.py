@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 from google.cloud import firestore
+from google.cloud.firestore_v1 import FieldFilter
 
 from app.config import (
     ROSTER_CODE_MAX_ATTEMPTS,
@@ -42,7 +43,7 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _person_key(person_id: str) -> str:
+def person_key(person_id: str) -> str:
     """Build the document id for a person in the current squadron.
 
     Args:
@@ -65,10 +66,25 @@ async def get_person(person_id: str) -> RosterPerson | None:
         The person, or None if they are not on the squadron.
     """
     col = database.get_collection(ROSTER_PEOPLE_COLLECTION)
-    snapshot = await col.document(_person_key(person_id)).get()
+    snapshot = await col.document(person_key(person_id)).get()
     if not snapshot.exists:
         return None
     return RosterPerson.model_validate(snapshot.to_dict())
+
+
+async def list_people() -> list[RosterPerson]:
+    """Read every cached squadron member, in name order.
+
+    Returns:
+        The squadron, which is empty until the people cache is seeded.
+    """
+    col = database.get_collection(ROSTER_PEOPLE_COLLECTION)
+    # ponytail: equality filter only, so the automatic single-field index serves it.
+    query = col.where(filter=FieldFilter("squadronId", "==", STARS_ORG_UNIT_ID))
+    people = [
+        RosterPerson.model_validate(doc.to_dict()) async for doc in query.stream()
+    ]
+    return sorted(people, key=lambda person: person.name)
 
 
 async def _take_request_allowance(person_id: str, now: datetime) -> None:
@@ -83,7 +99,7 @@ async def _take_request_allowance(person_id: str, now: datetime) -> None:
     """
     client = database.get_client()
     col = database.get_collection(ROSTER_CODE_REQUESTS_COLLECTION)
-    ref = col.document(_person_key(person_id))
+    ref = col.document(person_key(person_id))
     cutoff = now - timedelta(hours=1)
 
     @firestore.async_transactional

@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import API_KEY_HEADER_NAME
+from app.models.roster import Role
 from app.services import api_keys, roster_auth
 
 logger = logging.getLogger(__name__)
@@ -96,10 +97,12 @@ async def verify_session(
         credentials: Bearer credentials parsed from the request.
 
     Returns:
-        The session record, including person, name and role.
+        The session record, with the role as it stands now rather than as it
+        was at sign-in.
 
     Raises:
-        HTTPException: 401 if the token is absent, unknown or expired.
+        HTTPException: 401 if the token is absent, unknown or expired, or if
+            the person has since left the squadron.
     """
     unauthorised = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -122,5 +125,30 @@ async def verify_session(
     if session is None:
         raise unauthorised
 
+    # Role comes from the person, not the token, so demotion bites immediately.
+    person = await roster_auth.get_person(session["personId"])
+    if person is None:
+        raise unauthorised
+
     # The route needs the plain token to delete exactly this session on logout.
-    return {**session, "token": credentials.credentials}
+    return {**session, "role": person.role, "token": credentials.credentials}
+
+
+async def require_admin(session: dict = Depends(verify_session)) -> dict:
+    """Reject a signed-in person who is not an admin.
+
+    Args:
+        session: The caller's resolved session.
+
+    Returns:
+        The session record, so the route can log who acted.
+
+    Raises:
+        HTTPException: 403 if the person is signed in but not an admin.
+    """
+    if session["role"] != Role.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins only",
+        )
+    return session
