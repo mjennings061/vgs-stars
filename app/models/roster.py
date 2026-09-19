@@ -69,3 +69,38 @@ class RosterMonth(BaseModel):
     freeze_at: date
 
     # No frozen flag. It is computed from freeze_at, never stored.
+
+
+class Status(str, Enum):
+    """What a person said about one date, blank being no entry at all."""
+
+    YES = "Y"
+    NO = "N"
+    TBC = "TBC"
+
+
+class RosterEntry(BaseModel):
+    """One person's answer for one date, and who put it there."""
+
+    model_config = DOCUMENT
+
+    status: Status
+    comment: str | None = None
+    updated_by: str
+    updated_by_name: str
+    updated_at: datetime
+
+
+class RosterAvailability(BaseModel):
+    """A person's month, keyed by ``{squadronId}:{month}:{personId}``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    month: str = Field(..., description="Year and month, as 2026-11")
+    person_id: str
+    entries: dict[str, RosterEntry] = Field(
+        default_factory=dict, description="Keyed by ISO date"
+    )
+
+    # A row per person per month, so the grid is forty reads not four hundred.

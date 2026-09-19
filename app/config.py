@@ -45,12 +45,16 @@ ROSTER_CODES_COLLECTION = "roster_codes"
 ROSTER_SESSIONS_COLLECTION = "roster_sessions"
 ROSTER_CODE_REQUESTS_COLLECTION = "roster_code_requests"
 ROSTER_MONTHS_COLLECTION = "roster_months"
+ROSTER_AVAILABILITY_COLLECTION = "roster_availability"
 ROSTER_CODE_TTL_MINUTES = 30
 ROSTER_CODE_MAX_ATTEMPTS = 5
 ROSTER_CODE_REQUESTS_PER_HOUR = 3
 ROSTER_SESSION_HOURS = 12
 ROSTER_REMEMBER_DEVICE_DAYS = 30
 ROSTER_FREEZE_DAYS = 14
+
+# A reason on the grid is a sentence, not an essay, and it is shown to everyone.
+ROSTER_COMMENT_MAX_LENGTH = 200
 
 # The squadron flies to UK local time, and Cloud Run runs in UTC.
 ROSTER_TIMEZONE = "Europe/London"

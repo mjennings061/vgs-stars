@@ -20,6 +20,7 @@ import requests
 from google.cloud import firestore
 
 from app.config import (
+    ROSTER_AVAILABILITY_COLLECTION,
     ROSTER_MONTHS_COLLECTION,
     ROSTER_PEOPLE_COLLECTION,
     ROSTER_SESSIONS_COLLECTION,
@@ -93,9 +94,13 @@ def admin_auth():
     store = firestore.Client()
     months = store.collection(ROSTER_MONTHS_COLLECTION)
     month_key = f"{STARS_ORG_UNIT_ID}:{MONTH}"
+    answers = store.collection(ROSTER_AVAILABILITY_COLLECTION).document(
+        f"{month_key}:{PERSON_ID}"
+    )
 
     # A month leaked by a killed run would otherwise 409 the create test.
     months.document(month_key).delete()
+    answers.delete()
 
     store.collection(ROSTER_PEOPLE_COLLECTION).document(
         roster_auth.person_key(PERSON_ID)
@@ -128,6 +133,7 @@ def admin_auth():
 
     session.delete()
     months.document(month_key).delete()
+    answers.delete()
 
 
 def test_ready():
@@ -248,3 +254,25 @@ def test_patch_freeze(admin_auth):
     )
     assert response.status_code == 200, response.text
     assert response.json()["freezeAt"] == "2098-12-01"
+
+
+def test_set_availability_and_read_the_grid(admin_auth):
+    """An answer is written and the whole squadron can see it, for real."""
+    response = requests.put(
+        _url(f"/roster/months/{MONTH}/people/{PERSON_ID}/{WEEKDAY}"),
+        json={"status": "N", "comment": "Called in to work"},
+        headers=admin_auth,
+        timeout=TIMEOUT,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"applied": True}
+
+    grid = _get(f"/roster/months/{MONTH}/grid", headers=HEADERS)
+    assert grid.status_code == 200, grid.text
+
+    body = grid.json()
+    assert WEEKDAY in body["dates"]
+
+    row = next(row for row in body["rows"] if row["personId"] == PERSON_ID)
+    assert row["entries"][WEEKDAY]["status"] == "N"
+    assert row["entries"][WEEKDAY]["updatedByName"] == PERSON_NAME
