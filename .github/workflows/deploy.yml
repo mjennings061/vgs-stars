@@ -65,6 +65,10 @@ jobs:
             --env-vars-file deploy/env-dev.yaml \
             --set-secrets "STARS_API_KEY=stars-api-key:latest,STARS_URI=stars-uri:latest,STARS_ORG_UNIT_ID=stars-org-unit-id:latest,RESEND_API_KEY=resend-api-key:latest,CLOUD_TASKS_QUEUE_PATH=cloud-tasks-queue-path:latest,CLOUD_TASKS_API_KEY=cloud-tasks-api-key:latest"
 
+          # Pinned traffic would otherwise leave every new revision serving nothing.
+          gcloud run services update-traffic "$SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" --to-latest
+
       # Proves the new revision works against real Firestore, keys and Resend.
       - name: End-to-end
         env:
