@@ -125,13 +125,18 @@ async def verify_session(
     if session is None:
         raise unauthorised
 
-    # Role comes from the person, not the token, so demotion bites immediately.
+    # Role and name come from the person, so a demotion or rename bites at once.
     person = await roster_auth.get_person(session["personId"])
     if person is None:
         raise unauthorised
 
     # The route needs the plain token to delete exactly this session on logout.
-    return {**session, "role": person.role, "token": credentials.credentials}
+    return {
+        **session,
+        "role": person.role,
+        "name": person.name,
+        "token": credentials.credentials,
+    }
 
 
 async def require_admin(session: dict = Depends(verify_session)) -> dict:

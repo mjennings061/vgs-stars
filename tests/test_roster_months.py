@@ -104,7 +104,7 @@ def test_roster_reads_reject_a_stars_key(client, seed):
         }
     )
 
-    for path in ("/roster/people", "/roster/months"):
+    for path in ("/roster/people", "/roster/months", f"/roster/months/{MONTH}/grid"):
         response = client.get(path, headers={"X-API-Key": "test-stars-key"})
         assert response.status_code == 403
 
@@ -310,3 +310,13 @@ def test_me_reports_the_role_as_it_stands(client, admin_auth, seed):
     ).update({"role": Role.MEMBER.value})
 
     assert client.get("/roster/auth/me", headers=admin_auth).json()["role"] == "member"
+
+
+def test_me_reports_the_name_as_it_stands(client, admin_auth, seed):
+    """A corrected name must not keep being attributed to the old spelling."""
+    seed.collection(ROSTER_PEOPLE_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:{ADMIN_ID}"
+    ).update({"name": "J Doe-Smith"})
+
+    me = client.get("/roster/auth/me", headers=admin_auth)
+    assert me.json()["name"] == "J Doe-Smith"

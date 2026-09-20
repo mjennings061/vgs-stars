@@ -5,17 +5,17 @@ token afterwards. See ``roster-api-contract.md`` for the full contract.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.api_core.exceptions import Conflict
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from app.config import SCOPE_ROSTER_READ
-from app.models.roster import Role, RosterMonth
+from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ
+from app.models.roster import Role, RosterEntry, RosterMonth, Status
 from app.security import require_admin, require_scope, verify_session
-from app.services import roster_auth, roster_months
+from app.services import roster_auth, roster_availability, roster_months
 
 logger = logging.getLogger(__name__)
 
@@ -413,3 +413,184 @@ async def patch_month_freeze(
 
     logger.info("Month %s freeze moved by %s", month, session["personId"])
     return MonthResponse.of(record)
+
+
+class EntryResponse(BaseModel):
+    """One answer on the grid, listing its fields rather than echoing storage."""
+
+    # Generated aliases keep __init__ on the field names, which per-field alias= breaks.
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True, from_attributes=True
+    )
+
+    status: Status
+    comment: str | None = None
+    updated_by: str
+    updated_by_name: str
+    updated_at: datetime
+
+
+class GridRow(BaseModel):
+    """One person's line across the month."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    person_id: str
+    name: str
+    instruct_cat: str | None = None
+    entries: dict[str, EntryResponse] = Field(default_factory=dict)
+    # Always empty until change requests land, but the shape is what callers read.
+    pending: dict[str, dict] = Field(default_factory=dict)
+
+
+class GridResponse(BaseModel):
+    """Everything the grid needs, in one call."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    month: str
+    dates: list[date]
+    freeze_at: date
+    frozen: bool
+    rows: list[GridRow]
+
+
+class SetEntryRequest(BaseModel):
+    """Body setting one person's answer for one date."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    status: Status
+    comment: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
+
+
+class SetEntryResponse(BaseModel):
+    """Whether the answer landed, or became a request for an admin."""
+
+    applied: bool
+
+
+@router.get(
+    "/months/{month}/grid",
+    response_model=GridResponse,
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
+async def read_grid(month: str) -> GridResponse:
+    """Draw the whole month for the whole squadron.
+
+    Args:
+        month: Year and month, as 2026-11.
+
+    Returns:
+        Every person as a row, with only the dates they have answered.
+
+    Raises:
+        HTTPException: 400 for a malformed month, 404 if it does not exist.
+    """
+    _month_start(month)
+    record = await roster_months.get_month(month)
+    if record is None:
+        raise _unknown_month()
+
+    people = await roster_auth.list_people()
+    answers = await roster_availability.read_month(
+        month, [person.person_id for person in people]
+    )
+
+    return GridResponse(
+        month=record.month,
+        dates=record.dates,
+        freeze_at=record.freeze_at,
+        frozen=roster_months.is_frozen(record.freeze_at),
+        rows=[
+            GridRow(
+                person_id=person.person_id,
+                name=person.name,
+                instruct_cat=person.instruct_cat,
+                entries={
+                    day: EntryResponse.model_validate(entry)
+                    for day, entry in answers.get(person.person_id, {}).items()
+                },
+            )
+            for person in people
+        ],
+    )
+
+
+@router.put("/months/{month}/people/{person_id}/{day}", response_model=SetEntryResponse)
+async def set_availability(
+    month: str,
+    person_id: str,
+    day: date,
+    request: SetEntryRequest,
+    session: dict = Depends(verify_session),
+) -> SetEntryResponse:
+    """Set one person's answer for one date.
+
+    Args:
+        month: Year and month, as 2026-11.
+        person_id: Whose row is being written.
+        day: The flying date.
+        request: The answer and its optional comment.
+        session: The caller's resolved session.
+
+    Returns:
+        Whether the answer was written.
+
+    Raises:
+        HTTPException: 400 for a malformed month or a date off the grid, 404 if
+            the month or the person is unknown, 403 if the caller may not do
+            this.
+    """
+    _month_start(month)
+    record = await roster_months.get_month(month)
+    if record is None:
+        raise _unknown_month()
+
+    if day not in record.dates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{day.isoformat()} is not a flying date in {month}",
+        )
+
+    if await roster_auth.get_person(person_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown person"
+        )
+
+    is_admin = session["role"] == Role.ADMIN
+    if not is_admin and person_id != session["personId"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an admin can set someone else's availability",
+        )
+
+    # Filling a blank still lands after the freeze, since it is new information.
+    if not is_admin and roster_months.is_frozen(record.freeze_at):
+        answers = await roster_availability.read_month(month, [person_id])
+        if day.isoformat() in answers.get(person_id, {}):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{month} is frozen, ask an admin to change this answer",
+            )
+
+    await roster_availability.set_entry(
+        month,
+        person_id,
+        day.isoformat(),
+        RosterEntry(
+            status=request.status,
+            comment=request.comment,
+            updated_by=session["personId"],
+            updated_by_name=session["name"],
+            updated_at=datetime.now(UTC),
+        ),
+    )
+
+    logger.info(
+        "Availability for person %s on %s set by %s",
+        person_id,
+        day.isoformat(),
+        session["personId"],
+    )
+    return SetEntryResponse(applied=True)
