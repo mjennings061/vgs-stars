@@ -74,8 +74,8 @@ Once running, visit `http://localhost:8000/docs` for interactive Swagger documen
 ## Roster
 
 Who is available to fly on which weekend, replacing the availability
-spreadsheet. `roster-pds.md` says how it should behave and
-`roster-api-contract.md` lists the endpoints.
+spreadsheet. `docs/roster-pds.md` says how it should behave and
+`docs/roster-api-contract.md` lists the endpoints. Both untracked.
 
 ### First-time setup
 
