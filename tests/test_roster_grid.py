@@ -310,7 +310,9 @@ def test_changing_a_frozen_answer_waits_for_an_admin(client, admin_auth, member_
 def test_a_frozen_change_needs_a_reason(client, admin_auth, member_auth):
     """The admin deciding it has to know why."""
     _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y")
-    assert _set(client, member_auth, MEMBER_ID, SATURDAY, "N").status_code == 422
+    response = _set(client, member_auth, MEMBER_ID, SATURDAY, "N", comment="   ")
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "comment"]
 
 
 @pytest.mark.usefixtures("frozen_month")
@@ -350,7 +352,9 @@ def test_rejecting_leaves_the_answer_and_needs_a_reason(
     change_id = _request_change(client, admin_auth, member_auth)
     url = f"/roster/changes/{change_id}/reject"
 
-    assert client.post(url, json={"comment": ""}, headers=admin_auth).status_code == 422
+    assert (
+        client.post(url, json={"comment": "   "}, headers=admin_auth).status_code == 422
+    )
     response = client.post(url, json={"comment": "Need you"}, headers=admin_auth)
     assert response.status_code == 200, response.text
 

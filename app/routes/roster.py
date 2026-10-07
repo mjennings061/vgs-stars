@@ -469,7 +469,9 @@ class GridResponse(BaseModel):
 class SetEntryRequest(BaseModel):
     """Body setting one person's answer for one date."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        populate_by_name=True, extra="forbid", str_strip_whitespace=True
+    )
 
     status: Status
     comment: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
@@ -516,7 +518,9 @@ class ChangesResponse(BaseModel):
 class RejectRequest(BaseModel):
     """Body giving the admin's reason for turning a change down."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        populate_by_name=True, extra="forbid", str_strip_whitespace=True
+    )
 
     comment: str = Field(..., min_length=1, max_length=ROSTER_COMMENT_MAX_LENGTH)
 
@@ -651,7 +655,14 @@ async def set_availability(
     except roster_availability.ReasonRequired as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{month} is frozen, so changing an answer needs a reason",
+            # Contract: every 422 detail is a list of field errors.
+            detail=[
+                {
+                    "loc": ["body", "comment"],
+                    "msg": f"{month} is frozen, so changing an answer needs a reason",
+                    "type": "missing",
+                }
+            ],
         ) from e
 
     logger.info(
