@@ -91,6 +91,16 @@ class RosterEntry(BaseModel):
     updated_at: datetime
 
 
+class RosterPending(BaseModel):
+    """The grid's view of a change waiting for an admin."""
+
+    model_config = DOCUMENT
+
+    change_id: str
+    to_status: Status
+    reason: str | None = None
+
+
 class RosterAvailability(BaseModel):
     """A person's month, keyed by ``{squadronId}:{month}:{personId}``."""
 
@@ -102,5 +112,41 @@ class RosterAvailability(BaseModel):
     entries: dict[str, RosterEntry] = Field(
         default_factory=dict, description="Keyed by ISO date"
     )
+    # Kept beside the answers so the grid and the 409 check need no query.
+    pending: dict[str, RosterPending] = Field(
+        default_factory=dict, description="Keyed by ISO date"
+    )
 
     # A row per person per month, so the grid is forty reads not four hundred.
+
+
+class ChangeState(str, Enum):
+    """Where a logged change stands."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+
+
+class RosterChange(BaseModel):
+    """One write to the roster, appended to ``roster_changes``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    month: str
+    person_id: str
+    date: date
+    # Set on pending changes only.
+    from_status: Status | None = None
+    to_status: Status
+    reason: str | None = None
+    state: ChangeState
+    updated_by: str
+    updated_by_name: str
+    updated_at: datetime
+    decided_by: str | None = None
+    decided_by_name: str | None = None
+    decided_at: datetime | None = None
+    decision_comment: str | None = None

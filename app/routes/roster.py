@@ -1,7 +1,7 @@
-"""Roster endpoints: sign-in, the squadron list, and flying months.
+"""Roster endpoints: sign-in, the squadron, flying months and change requests.
 
 A person signs in with a six-digit code emailed to them, and holds a session
-token afterwards. See ``roster-api-contract.md`` for the full contract.
+token afterwards. See ``docs/roster-api-contract.md`` for the contract.
 """
 
 import logging
@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ
-from app.models.roster import Role, RosterEntry, RosterMonth, Status
+from app.models.roster import ChangeState, Role, RosterEntry, RosterMonth, Status
 from app.security import require_admin, require_scope, verify_session
 from app.services import roster_auth, roster_availability, roster_months
 
@@ -430,6 +430,18 @@ class EntryResponse(BaseModel):
     updated_at: datetime
 
 
+class PendingResponse(BaseModel):
+    """A change waiting for an admin, as the grid shows it."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True, from_attributes=True
+    )
+
+    change_id: str
+    to_status: Status
+    reason: str | None = None
+
+
 class GridRow(BaseModel):
     """One person's line across the month."""
 
@@ -439,8 +451,7 @@ class GridRow(BaseModel):
     name: str
     instruct_cat: str | None = None
     entries: dict[str, EntryResponse] = Field(default_factory=dict)
-    # Always empty until change requests land, but the shape is what callers read.
-    pending: dict[str, dict] = Field(default_factory=dict)
+    pending: dict[str, PendingResponse] = Field(default_factory=dict)
 
 
 class GridResponse(BaseModel):
@@ -467,7 +478,47 @@ class SetEntryRequest(BaseModel):
 class SetEntryResponse(BaseModel):
     """Whether the answer landed, or became a request for an admin."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     applied: bool
+    change_id: str | None = None
+
+
+class ChangeResponse(BaseModel):
+    """One logged change, listing its fields rather than echoing storage."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True, from_attributes=True
+    )
+
+    change_id: str
+    person_id: str
+    name: str
+    date: date
+    from_status: Status | None = None
+    to_status: Status
+    reason: str | None = None
+    state: ChangeState
+    updated_by: str
+    updated_by_name: str
+    updated_at: datetime
+    decided_by_name: str | None = None
+    decided_at: datetime | None = None
+    decision_comment: str | None = None
+
+
+class ChangesResponse(BaseModel):
+    """Changes across every grid, newest first."""
+
+    changes: list[ChangeResponse]
+
+
+class RejectRequest(BaseModel):
+    """Body giving the admin's reason for turning a change down."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    comment: str = Field(..., min_length=1, max_length=ROSTER_COMMENT_MAX_LENGTH)
 
 
 @router.get(
@@ -497,27 +548,39 @@ async def read_grid(month: str) -> GridResponse:
         month, [person.person_id for person in people]
     )
 
+    rows = []
+    for person in people:
+        row = GridRow(
+            person_id=person.person_id,
+            name=person.name,
+            instruct_cat=person.instruct_cat,
+        )
+        answer = answers.get(person.person_id)
+        if answer:
+            row.entries = {
+                day: EntryResponse.model_validate(entry)
+                for day, entry in answer.entries.items()
+            }
+            row.pending = {
+                day: PendingResponse.model_validate(pending)
+                for day, pending in answer.pending.items()
+            }
+        rows.append(row)
+
     return GridResponse(
         month=record.month,
         dates=record.dates,
         freeze_at=record.freeze_at,
         frozen=roster_months.is_frozen(record.freeze_at),
-        rows=[
-            GridRow(
-                person_id=person.person_id,
-                name=person.name,
-                instruct_cat=person.instruct_cat,
-                entries={
-                    day: EntryResponse.model_validate(entry)
-                    for day, entry in answers.get(person.person_id, {}).items()
-                },
-            )
-            for person in people
-        ],
+        rows=rows,
     )
 
 
-@router.put("/months/{month}/people/{person_id}/{day}", response_model=SetEntryResponse)
+@router.put(
+    "/months/{month}/people/{person_id}/{day}",
+    response_model=SetEntryResponse,
+    response_model_exclude_none=True,
+)
 async def set_availability(
     month: str,
     person_id: str,
@@ -535,12 +598,13 @@ async def set_availability(
         session: The caller's resolved session.
 
     Returns:
-        Whether the answer was written.
+        Whether the answer was written, or the id of the change it became.
 
     Raises:
         HTTPException: 400 for a malformed month or a date off the grid, 404 if
             the month or the person is unknown, 403 if the caller may not do
-            this.
+            this, 409 if the date already has a pending change, 422 if a
+            change after the freeze gives no reason.
     """
     _month_start(month)
     record = await roster_months.get_month(month)
@@ -565,32 +629,142 @@ async def set_availability(
             detail="Only an admin can set someone else's availability",
         )
 
-    # Filling a blank still lands after the freeze, since it is new information.
-    if not is_admin and roster_months.is_frozen(record.freeze_at):
-        answers = await roster_availability.read_month(month, [person_id])
-        if day.isoformat() in answers.get(person_id, {}):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"{month} is frozen, ask an admin to change this answer",
-            )
-
-    await roster_availability.set_entry(
-        month,
-        person_id,
-        day.isoformat(),
-        RosterEntry(
-            status=request.status,
-            comment=request.comment,
-            updated_by=session["personId"],
-            updated_by_name=session["name"],
-            updated_at=datetime.now(UTC),
-        ),
-    )
+    try:
+        change_id = await roster_availability.save(
+            month,
+            person_id,
+            day.isoformat(),
+            RosterEntry(
+                status=request.status,
+                comment=request.comment,
+                updated_by=session["personId"],
+                updated_by_name=session["name"],
+                updated_at=datetime.now(UTC),
+            ),
+            needs_approval=not is_admin and roster_months.is_frozen(record.freeze_at),
+        )
+    except roster_availability.PendingExists as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{day.isoformat()} already has a change waiting for an admin",
+        ) from e
+    except roster_availability.ReasonRequired as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{month} is frozen, so changing an answer needs a reason",
+        ) from e
 
     logger.info(
-        "Availability for person %s on %s set by %s",
+        "Availability for person %s on %s %s by %s",
         person_id,
         day.isoformat(),
+        "requested" if change_id else "set",
         session["personId"],
     )
-    return SetEntryResponse(applied=True)
+    return SetEntryResponse(applied=change_id is None, change_id=change_id)
+
+
+@router.get(
+    "/changes",
+    response_model=ChangesResponse,
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
+async def read_changes(state: ChangeState | None = None) -> ChangesResponse:
+    """List changes across every grid, for the changes panel.
+
+    Args:
+        state: Only changes in this state, as ``?state=pending``.
+
+    Returns:
+        The changes, newest first.
+    """
+    names = {
+        person.person_id: person.name for person in await roster_auth.list_people()
+    }
+    return ChangesResponse(
+        changes=[
+            ChangeResponse(
+                **change.model_dump(),
+                change_id=change_id,
+                name=names.get(change.person_id, change.person_id),
+            )
+            for change_id, change in await roster_availability.list_changes(state)
+        ]
+    )
+
+
+async def _decide(
+    change_id: str, session: dict, *, approve: bool, comment: str | None = None
+) -> dict:
+    """Approve or reject a change, turning service errors into HTTP ones.
+
+    Args:
+        change_id: The change to decide.
+        session: The admin deciding.
+        approve: True to write the new answer.
+        comment: The admin's reason for a rejection.
+
+    Returns:
+        An empty acknowledgement.
+
+    Raises:
+        HTTPException: 404 for an unknown change, 409 if it is not pending.
+    """
+    try:
+        await roster_availability.decide(
+            change_id,
+            approve=approve,
+            decided_by=session["personId"],
+            decided_by_name=session["name"],
+            comment=comment,
+        )
+    except roster_availability.UnknownChange as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown change"
+        ) from e
+    except roster_availability.NotPending as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This change has already been decided",
+        ) from e
+
+    logger.info(
+        "Change %s %s by %s",
+        change_id,
+        "approved" if approve else "rejected",
+        session["personId"],
+    )
+    return {}
+
+
+@router.post("/changes/{change_id}/approve")
+async def approve_change(
+    change_id: str, session: dict = Depends(require_admin)
+) -> dict:
+    """Write the requested answer and close the change.
+
+    Args:
+        change_id: The change to approve.
+        session: The admin doing it.
+
+    Returns:
+        An empty acknowledgement.
+    """
+    return await _decide(change_id, session, approve=True)
+
+
+@router.post("/changes/{change_id}/reject")
+async def reject_change(
+    change_id: str, request: RejectRequest, session: dict = Depends(require_admin)
+) -> dict:
+    """Leave the answer alone and close the change with the admin's reason.
+
+    Args:
+        change_id: The change to reject.
+        request: The admin's reason.
+        session: The admin doing it.
+
+    Returns:
+        An empty acknowledgement.
+    """
+    return await _decide(change_id, session, approve=False, comment=request.comment)

@@ -3,17 +3,18 @@
 # Fixtures shadow their own names by design in pytest.
 # pylint: disable=redefined-outer-name
 
+import asyncio
 import os
 from datetime import date, timedelta
 
 import pytest
 
 from app.config import (
-    ROSTER_AVAILABILITY_COLLECTION,
     ROSTER_CHANGES_COLLECTION,
     ROSTER_MONTHS_COLLECTION,
     STARS_ORG_UNIT_ID,
 )
+from app.services import database, roster_availability
 from tests.conftest import (
     ADMIN_ID,
     ADMIN_NAME,
@@ -198,36 +199,6 @@ def test_filling_a_blank_after_the_freeze_still_lands(client, member_auth):
     assert _row(client, MEMBER_ID)["entries"][SATURDAY]["status"] == "Y"
 
 
-def test_changing_an_answer_after_the_freeze_is_refused(
-    client, frozen_month, member_auth
-):
-    """The month is published, so an answer only moves with an admin's say-so."""
-    frozen_month.collection(ROSTER_AVAILABILITY_COLLECTION).document(
-        f"{STARS_ORG_UNIT_ID}:{MONTH}:{MEMBER_ID}"
-    ).set(
-        {
-            "squadronId": STARS_ORG_UNIT_ID,
-            "month": MONTH,
-            "personId": MEMBER_ID,
-            "entries": {
-                SATURDAY: {
-                    "status": "Y",
-                    "comment": None,
-                    "updatedBy": MEMBER_ID,
-                    "updatedByName": MEMBER_NAME,
-                    "updatedAt": "2027-01-01T10:00:00+00:00",
-                }
-            },
-        }
-    )
-
-    assert (
-        _set(client, member_auth, MEMBER_ID, SATURDAY, "N", comment="Work").status_code
-        == 403
-    )
-    assert _row(client, MEMBER_ID)["entries"][SATURDAY]["status"] == "Y"
-
-
 @pytest.mark.usefixtures("frozen_month")
 def test_an_admin_still_writes_after_the_freeze(client, admin_auth):
     """Somebody has to be able to fix the grid on the Friday night."""
@@ -276,3 +247,171 @@ def test_a_frozen_month_says_so_on_the_grid(client):
     body = response.json()
     assert body["frozen"] is True
     assert body["freezeAt"] == (date.today() - timedelta(days=1)).isoformat()
+
+
+def _request_change(client, admin_auth, member_auth) -> str:
+    """Have the member ask to move a frozen Y to N.
+
+    Args:
+        client: The test client.
+        admin_auth: An admin's Authorization header, to set the first answer.
+        member_auth: The member's Authorization header.
+
+    Returns:
+        The pending change's id.
+    """
+    assert _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y").status_code == 200
+    response = _set(client, member_auth, MEMBER_ID, SATURDAY, "N", comment="Work")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["applied"] is False
+    return body["changeId"]
+
+
+def _changes(client, state: str | None = None) -> list[dict]:
+    """Read the change log.
+
+    Args:
+        client: The test client.
+        state: Only changes in this state.
+
+    Returns:
+        The changes, newest first.
+    """
+    params = {"state": state} if state else {}
+    response = client.get("/roster/changes", headers=HEADERS, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()["changes"]
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_changing_a_frozen_answer_waits_for_an_admin(client, admin_auth, member_auth):
+    """The month is published, so an answer only moves with an admin's say-so."""
+    change_id = _request_change(client, admin_auth, member_auth)
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["status"] == "Y"
+    assert row["pending"][SATURDAY] == {
+        "changeId": change_id,
+        "toStatus": "N",
+        "reason": "Work",
+    }
+
+    [pending] = _changes(client, "pending")
+    assert pending["changeId"] == change_id
+    assert (pending["fromStatus"], pending["toStatus"]) == ("Y", "N")
+    assert pending["name"] == MEMBER_NAME
+
+    again = _set(client, member_auth, MEMBER_ID, SATURDAY, "TBC", comment="Maybe")
+    assert again.status_code == 409
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_a_frozen_change_needs_a_reason(client, admin_auth, member_auth):
+    """The admin deciding it has to know why."""
+    _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y")
+    assert _set(client, member_auth, MEMBER_ID, SATURDAY, "N").status_code == 422
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_editing_only_the_comment_lands_after_the_freeze(
+    client, admin_auth, member_auth
+):
+    """Same answer, so there is nothing for an admin to approve."""
+    _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y")
+    response = _set(client, member_auth, MEMBER_ID, SATURDAY, "Y", comment="Late")
+    assert response.json() == {"applied": True}
+    assert _row(client, MEMBER_ID)["entries"][SATURDAY]["comment"] == "Late"
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_approving_writes_the_answer_once(client, admin_auth, member_auth):
+    """Approval moves the answer, and a second click cannot decide it again."""
+    change_id = _request_change(client, admin_auth, member_auth)
+    url = f"/roster/changes/{change_id}/approve"
+
+    assert client.post(url, headers=member_auth).status_code == 403
+    assert client.post(url, headers=admin_auth).status_code == 200
+    assert client.post(url, headers=admin_auth).status_code == 409
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["status"] == "N"
+    assert row["entries"][SATURDAY]["comment"] == "Work"
+    assert row["entries"][SATURDAY]["updatedBy"] == MEMBER_ID
+    assert row["pending"] == {}
+    assert _changes(client, "pending") == []
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_rejecting_leaves_the_answer_and_needs_a_reason(
+    client, admin_auth, member_auth
+):
+    """The person gets told why, so the reason cannot be blank."""
+    change_id = _request_change(client, admin_auth, member_auth)
+    url = f"/roster/changes/{change_id}/reject"
+
+    assert client.post(url, json={"comment": ""}, headers=admin_auth).status_code == 422
+    response = client.post(url, json={"comment": "Need you"}, headers=admin_auth)
+    assert response.status_code == 200, response.text
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["status"] == "Y"
+    assert row["pending"] == {}
+    [rejected] = _changes(client, "rejected")
+    assert rejected["decisionComment"] == "Need you"
+    assert rejected["decidedByName"] == ADMIN_NAME
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_an_admin_write_supersedes_a_pending_change(client, admin_auth, member_auth):
+    """The admin's answer wins, and the request is closed rather than left hanging."""
+    change_id = _request_change(client, admin_auth, member_auth)
+    assert _set(client, admin_auth, MEMBER_ID, SATURDAY, "TBC").status_code == 200
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["status"] == "TBC"
+    assert row["pending"] == {}
+    [superseded] = _changes(client, "superseded")
+    assert superseded["changeId"] == change_id
+    assert (
+        client.post(
+            f"/roster/changes/{change_id}/approve", headers=admin_auth
+        ).status_code
+        == 409
+    )
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_two_admins_deciding_at_once_only_one_wins(client, admin_auth, member_auth):
+    """Approve and reject racing each other must not both land."""
+    change_id = _request_change(client, admin_auth, member_auth)
+    # The race runs on its own event loop, so it needs its own Firestore client.
+    database._client = None  # pylint: disable=protected-access
+
+    async def both() -> list:
+        """Decide the same change twice, at the same time."""
+        return await asyncio.gather(
+            roster_availability.decide(
+                change_id, approve=True, decided_by=ADMIN_ID, decided_by_name="A"
+            ),
+            roster_availability.decide(
+                change_id,
+                approve=False,
+                decided_by=ADMIN_ID,
+                decided_by_name="B",
+                comment="No",
+            ),
+            return_exceptions=True,
+        )
+
+    results = asyncio.run(both())
+    assert sorted(type(result).__name__ for result in results) == [
+        "NoneType",
+        "NotPending",
+    ]
+
+
+def test_unknown_change_is_404(client, admin_auth):
+    """A stale link from the dashboard must say so."""
+    response = client.post("/roster/changes/nope/approve", headers=admin_auth)
+    assert response.status_code == 404
