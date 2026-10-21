@@ -81,21 +81,19 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
     return name
 
 
-def enqueue_signin_code(email: str, name: str, code: str, key: str) -> str:
+def enqueue_signin_code(code: str, key: str) -> str:
     """Queue a Cloud Task to email a sign-in code, so the request need not wait.
 
     Args:
-        email: Where to send the code.
-        name: Name of the person signing in.
         code: The six-digit code.
-        key: Hashed nonce, which de-duplicates retries.
+        key: Hashed nonce the code is stored under, which also de-duplicates retries.
 
     Returns:
         Cloud Tasks task name.
     """
     # Cloud Tasks calls this same service, so its target URL gives us our own base.
     url = urljoin(CLOUD_TASKS_TARGET_URL, "/roster/tasks/send-code")
-    body = {"email": email, "name": name, "code": code, "key": key}
+    body = {"code": code, "key": key}
     task_name = _enqueue(CLOUD_TASKS_SIGNIN_QUEUE_PATH, url, body)
     logger.info("Queued sign-in code task %s", task_name)
     return task_name

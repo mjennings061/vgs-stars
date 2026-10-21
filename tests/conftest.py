@@ -53,7 +53,7 @@ from app.config import (  # noqa: E402
 )
 from app.main import app  # noqa: E402
 from app.models.roster import Role  # noqa: E402
-from app.services import api_keys, database, email_service  # noqa: E402
+from app.services import api_keys, database  # noqa: E402
 
 READ_KEY = "test-roster-read-key"
 HEADERS = {"X-API-Key": READ_KEY}
@@ -135,12 +135,20 @@ def seed():
 
 
 @pytest.fixture(autouse=True)
-def _send_codes_inline(mocker):
-    """Send sign-in codes straight away instead of through Cloud Tasks."""
-    mocker.patch(
-        "app.services.cloud_tasks.enqueue_signin_code",
-        side_effect=email_service.send_signin_code_email,
-    )
+def queued(mocker):
+    """Record Cloud Tasks instead of creating them, so a test can replay one.
+
+    Returns:
+        The ``(url, body)`` of each task, in the order they were queued.
+    """
+    tasks = []
+
+    def record(_queue, url, body, _delay_seconds=0):
+        tasks.append((url, body))
+        return f"task-{len(tasks)}"
+
+    mocker.patch("app.services.cloud_tasks._enqueue", side_effect=record)
+    return tasks
 
 
 @pytest.fixture

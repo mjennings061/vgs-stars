@@ -1,5 +1,6 @@
 """Sign-in codes and sessions for the roster."""
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -22,7 +23,7 @@ from app.config import (
     STARS_ORG_UNIT_ID,
 )
 from app.models.roster import RosterCode, RosterPerson, RosterSession
-from app.services import cloud_tasks, database
+from app.services import cloud_tasks, database, email_service
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,23 @@ async def _take_request_allowance(person_id: str, now: datetime) -> None:
         raise RateLimited
 
 
+def _spent(data: dict, now: datetime) -> bool:
+    """Check whether a stored code can no longer be used.
+
+    Args:
+        data: The stored code record.
+        now: The current time.
+
+    Returns:
+        True if the code is used, expired or locked by wrong attempts.
+    """
+    return bool(
+        data.get("used")
+        or datetime.fromisoformat(data["expiresAt"]) <= now
+        or data.get("attempts", 0) >= ROSTER_CODE_MAX_ATTEMPTS
+    )
+
+
 async def request_code(person_id: str) -> str:
     """Issue a sign-in code and email it, if the person can receive one.
 
@@ -156,13 +174,48 @@ async def request_code(person_id: str) -> str:
 
     # Queued, because Resend can take 30s and Cloud Run throttles CPU after a reply.
     try:
-        cloud_tasks.enqueue_signin_code(person.email, person.name, code, _hash(nonce))
+        cloud_tasks.enqueue_signin_code(code, _hash(nonce))
         logger.info("Sign-in code queued for person %s", person_id)
     except Exception:  # pylint: disable=broad-exception-caught
         # The contract is always 202, so a queue failure must not surface here.
         logger.exception("Sign-in code queueing failed for person %s", person_id)
 
     return nonce
+
+
+async def send_queued_code(key: str, code: str) -> None:
+    """Email a queued code to its owner, but only while it can still be used.
+
+    Args:
+        key: Hashed nonce the code is stored under.
+        code: The six-digit code.
+
+    Raises:
+        EmailServiceError: If Resend fails.
+    """
+    ref = database.get_collection(ROSTER_CODES_COLLECTION).document(key)
+    snapshot = await ref.get()
+    data = snapshot.to_dict() if snapshot.exists else None
+    if not data or _spent(data, datetime.now(UTC)):
+        # Stale or unknown, so drop it rather than have Cloud Tasks retry it.
+        logger.warning("Queued sign-in code is no longer usable, not sent")
+        return
+
+    if not secrets.compare_digest(data.get("codeHash", ""), _hash(code)):
+        # A real task always has the right code, so this is a guess and counts.
+        await ref.update({"attempts": firestore.Increment(1)})
+        logger.warning("Queued sign-in code did not match, counted as a wrong guess")
+        return
+
+    person = await get_person(data["personId"])
+    if person is None or not person.email:
+        logger.warning("Queued sign-in code has no one to send to")
+        return
+
+    # A thread, so a slow Resend does not stall every other request.
+    await asyncio.to_thread(
+        email_service.send_signin_code_email, person.email, person.name, code, key
+    )
 
 
 async def verify_code(nonce: str, code: str, remember_device: bool) -> dict | None:
@@ -190,17 +243,11 @@ async def verify_code(nonce: str, code: str, remember_device: bool) -> dict | No
             return None
 
         data = snapshot.to_dict() or {}
-        attempts = data.get("attempts", 0)
-        expires_at = datetime.fromisoformat(data["expiresAt"])
-        if (
-            data.get("used")
-            or expires_at <= now
-            or attempts >= ROSTER_CODE_MAX_ATTEMPTS
-        ):
+        if _spent(data, now):
             return None
 
         if not secrets.compare_digest(data.get("codeHash", ""), code_hash):
-            transaction.update(ref, {"attempts": attempts + 1})
+            transaction.update(ref, {"attempts": data.get("attempts", 0) + 1})
             return None
 
         transaction.update(ref, {"used": True})

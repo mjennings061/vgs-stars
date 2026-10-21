@@ -58,10 +58,8 @@ class SendCodeRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    email: str
-    name: str
     code: str = Field(..., pattern=r"^\d{6}$")
-    key: str
+    key: str = Field(..., pattern=r"^[0-9a-f]{64}$")
 
 
 class VerifyCodeRequest(BaseModel):
@@ -129,15 +127,13 @@ async def send_code(request: SendCodeRequest) -> None:
     """Email a queued sign-in code; called by Cloud Tasks.
 
     Args:
-        request: The code and who it goes to.
+        request: The code and the hashed nonce it is stored under.
 
     Raises:
         HTTPException: 502 if Resend fails, so Cloud Tasks retries.
     """
     try:
-        email_service.send_signin_code_email(
-            request.email, request.name, request.code, request.key
-        )
+        await roster_auth.send_queued_code(request.key, request.code)
     except email_service.EmailServiceError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
