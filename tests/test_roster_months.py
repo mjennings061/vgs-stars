@@ -4,7 +4,8 @@
 # pylint: disable=redefined-outer-name
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -12,6 +13,7 @@ from app.config import (
     DATABASE_USERS_COLLECTION,
     ROSTER_MONTHS_COLLECTION,
     ROSTER_PEOPLE_COLLECTION,
+    ROSTER_TIMEZONE,
     SCOPE_STARS,
     STARS_ORG_UNIT_ID,
 )
@@ -161,8 +163,10 @@ def test_months_lists_newest_first(client, admin_auth):
 def test_freeze_date_decides_frozen(client, admin_auth, seed):
     """Frozen is worked out from the freeze date, and never stored."""
     _create(client, admin_auth)
-    today = date.today().isoformat()
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    # The UK date, as the app uses; after 23:00 UTC in summer it is already tomorrow.
+    today_uk = datetime.now(ZoneInfo(ROSTER_TIMEZONE)).date()
+    today = today_uk.isoformat()
+    tomorrow = (today_uk + timedelta(days=1)).isoformat()
 
     frozen = _freeze(client, admin_auth, today)
     assert frozen.status_code == 200

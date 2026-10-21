@@ -228,13 +228,14 @@ def send_notification_email(
     return True
 
 
-def send_signin_code_email(email_address: str, name: str, code: str) -> bool:
+def send_signin_code_email(email_address: str, name: str, code: str, key: str) -> bool:
     """Send a roster sign-in code via Resend.
 
     Args:
         email_address: Where to send the code.
         name: Name of the person signing in.
         code: The six-digit code.
+        key: Hashed nonce, which de-duplicates Cloud Tasks retries.
 
     Returns:
         True if the email was sent successfully.
@@ -267,8 +268,11 @@ def send_signin_code_email(email_address: str, name: str, code: str) -> bool:
         "text": plain_text,
     }
 
+    # Idempotency key stops Cloud Tasks retries sending the code twice.
+    options: resend.Emails.SendOptions = {"idempotency_key": f"signin-code/{key}"}
+
     try:
-        sent = resend.Emails.send(params)
+        sent = resend.Emails.send(params, options)
     except Exception as e:
         logger.error("Error sending sign-in code to %s: %s", email_address, e)
         raise EmailServiceError(f"Failed to send sign-in code: {e}") from e

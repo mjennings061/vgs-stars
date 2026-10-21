@@ -1,9 +1,10 @@
-"""Cloud Tasks service for queuing notification send requests."""
+"""Cloud Tasks service for queuing notification and sign-in code sends."""
 
 import datetime
 import json
 import logging
 from typing import Any, Dict
+from urllib.parse import urljoin
 
 from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
@@ -12,17 +13,20 @@ from app.config import (
     API_KEY_HEADER_NAME,
     CLOUD_TASKS_API_KEY,
     CLOUD_TASKS_QUEUE_PATH,
+    CLOUD_TASKS_SIGNIN_QUEUE_PATH,
     CLOUD_TASKS_TARGET_URL,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
-    """Queue a Cloud Task to send a notification batch.
+def _enqueue(queue: str, url: str, body: dict, delay_seconds: int = 0) -> str:
+    """Queue a Cloud Task that POSTs a JSON body back to this service.
 
     Args:
-        batch_id: Notification batch ID to send.
+        queue: Full resource path of the queue.
+        url: Target URL the task calls.
+        body: JSON body to send.
         delay_seconds: Delay from now before dispatching the task.
 
     Returns:
@@ -38,9 +42,9 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
     task: Dict[str, Any] = {
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
-            "url": CLOUD_TASKS_TARGET_URL,
+            "url": url,
             "headers": headers,
-            "body": json.dumps({"batch_id": batch_id}).encode(),
+            "body": json.dumps(body).encode(),
         }
     }
 
@@ -53,8 +57,43 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
         )
         task["schedule_time"] = timestamp
 
-    response = client.create_task(
-        request={"parent": CLOUD_TASKS_QUEUE_PATH, "task": task}
-    )
-    logger.info("Queued task %s for batch %s", response.name, batch_id)
+    response = client.create_task(request={"parent": queue, "task": task})
     return response.name
+
+
+def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
+    """Queue a Cloud Task to send a notification batch.
+
+    Args:
+        batch_id: Notification batch ID to send.
+        delay_seconds: Delay from now before dispatching the task.
+
+    Returns:
+        Cloud Tasks task name.
+    """
+    name = _enqueue(
+        CLOUD_TASKS_QUEUE_PATH,
+        CLOUD_TASKS_TARGET_URL,
+        {"batch_id": batch_id},
+        delay_seconds,
+    )
+    logger.info("Queued task %s for batch %s", name, batch_id)
+    return name
+
+
+def enqueue_signin_code(code: str, key: str) -> str:
+    """Queue a Cloud Task to email a sign-in code, so the request need not wait.
+
+    Args:
+        code: The six-digit code.
+        key: Hashed nonce the code is stored under, which also de-duplicates retries.
+
+    Returns:
+        Cloud Tasks task name.
+    """
+    # Cloud Tasks calls this same service, so its target URL gives us our own base.
+    url = urljoin(CLOUD_TASKS_TARGET_URL, "/roster/tasks/send-code")
+    body = {"code": code, "key": key}
+    task_name = _enqueue(CLOUD_TASKS_SIGNIN_QUEUE_PATH, url, body)
+    logger.info("Queued sign-in code task %s", task_name)
+    return task_name

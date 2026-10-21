@@ -4,8 +4,8 @@
 # pylint: disable=redefined-outer-name
 
 import os
-import re
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
 
 import pytest
 
@@ -17,6 +17,7 @@ from app.config import (
     SCOPE_STARS,
 )
 from app.services import api_keys
+from tests.conftest import ADMIN_EMAIL
 from tests.conftest import ADMIN_ID as PERSON_ID
 from tests.conftest import HEADERS
 
@@ -47,31 +48,29 @@ def _request_code(client, person_id: str = PERSON_ID):
     )
 
 
-def _code_from(sent) -> str:
-    """Pull the six-digit code out of the email that was sent.
+def _code_from(queued) -> str:
+    """Pull the six-digit code out of the sign-in task that was queued.
 
     Args:
-        sent: The patched Resend send function.
+        queued: The recorded Cloud Tasks.
 
     Returns:
-        The code as it reached the person.
+        The code as the task would email it.
     """
-    params = sent.call_args[0][0]
-    match = re.search(r"\b\d{6}\b", params["text"])
-    assert match, "no six-digit code in the email"
-    return match.group()
+    _url, body = queued[-1]
+    return body["code"]
 
 
-def test_sign_in_flow(client, sent):
+def test_sign_in_flow(client, queued):
     """Request a code, spend it, read the session back, then close it."""
     response = _request_code(client)
     assert response.status_code == 202
     nonce = response.json()["nonce"]
-    assert sent.call_count == 1
+    assert len(queued) == 1
 
     verified = client.post(
         "/roster/auth/verify-code",
-        json={"nonce": nonce, "code": _code_from(sent)},
+        json={"nonce": nonce, "code": _code_from(queued)},
     )
     assert verified.status_code == 200
     body = verified.json()
@@ -94,10 +93,10 @@ def test_sign_in_flow(client, sent):
     assert client.get("/roster/auth/me", headers=auth).status_code == 401
 
 
-def test_wrong_code_and_wrong_nonce_are_indistinguishable(client, sent):
+def test_wrong_code_and_wrong_nonce_are_indistinguishable(client, queued):
     """Neither response may hint at which half of the pair was wrong."""
     nonce = _request_code(client).json()["nonce"]
-    real_code = _code_from(sent)
+    real_code = _code_from(queued)
 
     wrong_code = client.post(
         "/roster/auth/verify-code", json={"nonce": nonce, "code": "000000"}
@@ -110,10 +109,10 @@ def test_wrong_code_and_wrong_nonce_are_indistinguishable(client, sent):
     assert wrong_code.json() == wrong_nonce.json()
 
 
-def test_expired_code_is_refused(client, sent, seed):
+def test_expired_code_is_refused(client, queued, seed):
     """A code past its expiry is no longer acceptable."""
     nonce = _request_code(client).json()["nonce"]
-    code = _code_from(sent)
+    code = _code_from(queued)
 
     # Age the code rather than waiting out its lifetime.
     stale = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
@@ -126,20 +125,20 @@ def test_expired_code_is_refused(client, sent, seed):
     assert response.status_code == 401
 
 
-def test_code_is_single_use(client, sent):
+def test_code_is_single_use(client, queued):
     """The second use of a good code is refused."""
     nonce = _request_code(client).json()["nonce"]
-    code = _code_from(sent)
+    code = _code_from(queued)
     body = {"nonce": nonce, "code": code}
 
     assert client.post("/roster/auth/verify-code", json=body).status_code == 200
     assert client.post("/roster/auth/verify-code", json=body).status_code == 401
 
 
-def test_code_locks_after_five_attempts(client, sent):
+def test_code_locks_after_five_attempts(client, queued):
     """Five wrong guesses burn the code, even if the sixth guess is right."""
     nonce = _request_code(client).json()["nonce"]
-    code = _code_from(sent)
+    code = _code_from(queued)
 
     for _ in range(5):
         wrong = client.post(
@@ -153,25 +152,27 @@ def test_code_locks_after_five_attempts(client, sent):
     assert response.status_code == 401
 
 
-def test_unknown_person_still_gets_a_nonce(client, sent):
+def test_unknown_person_still_gets_a_nonce(client, queued):
     """202 either way, or this endpoint enumerates the squadron."""
     response = _request_code(client, person_id="p-does-not-exist")
     assert response.status_code == 202
     assert response.json()["nonce"]
-    assert sent.call_count == 0
+    assert not queued
 
 
-def test_a_path_like_person_id_still_gets_a_nonce(client, sent):
+def test_a_path_like_person_id_still_gets_a_nonce(client, queued):
     """A slash must not reach Firestore as a document id and 500."""
     response = _request_code(client, person_id="a/b")
     assert response.status_code == 202
     assert response.json()["nonce"]
-    assert sent.call_count == 0
+    assert not queued
 
 
-def test_a_failed_send_still_gets_a_nonce(client, sent):
-    """Resend falling over must not turn 202 into 500."""
-    sent.side_effect = RuntimeError("resend is down")
+def test_a_failed_queue_still_gets_a_nonce(client, mocker):
+    """Cloud Tasks falling over must not turn 202 into 500."""
+    mocker.patch(
+        "app.services.cloud_tasks._enqueue", side_effect=RuntimeError("queue is down")
+    )
     response = _request_code(client)
     assert response.status_code == 202
     assert response.json()["nonce"]
@@ -186,7 +187,7 @@ def test_fourth_code_request_in_an_hour_is_refused(client):
     assert _request_code(client).status_code == 429
 
 
-def test_request_code_rejects_a_stars_key(client, seed, sent):
+def test_request_code_rejects_a_stars_key(client, seed, queued):
     """A key scoped for STARS must not reach the roster."""
     seed.collection(DATABASE_USERS_COLLECTION).document("stars-key").set(
         {
@@ -202,14 +203,14 @@ def test_request_code_rejects_a_stars_key(client, seed, sent):
         headers={"X-API-Key": "test-stars-key"},
     )
     assert response.status_code == 403
-    assert sent.call_count == 0
+    assert not queued
 
 
 @pytest.mark.parametrize(
     "remember_device,expected_days", [(False, 0), (True, ROSTER_REMEMBER_DEVICE_DAYS)]
 )
 def test_remember_device_sets_the_session_lifetime(
-    client, sent, remember_device, expected_days
+    client, queued, remember_device, expected_days
 ):
     """Twelve hours by default, thirty days when the device is remembered."""
     nonce = _request_code(client).json()["nonce"]
@@ -217,7 +218,7 @@ def test_remember_device_sets_the_session_lifetime(
         "/roster/auth/verify-code",
         json={
             "nonce": nonce,
-            "code": _code_from(sent),
+            "code": _code_from(queued),
             "rememberDevice": remember_device,
         },
     ).json()
@@ -256,3 +257,54 @@ def test_key_with_no_scopes_is_refused(client, seed):
 
     response = client.get("/", headers={"X-API-Key": "legacy-key"})
     assert response.status_code == 401
+
+
+def test_send_code_task_emails_only_a_real_code_to_its_owner(
+    client, seed, sent, queued
+):
+    """The queued task reaches its owner; a forged one or the roster key does not."""
+    seed.collection(DATABASE_USERS_COLLECTION).document("stars-key").set(
+        {
+            "name": "cloud-tasks",
+            "api_key": api_keys.hash_api_key("test-stars-key"),
+            "scopes": [SCOPE_STARS],
+        }
+    )
+    nonce = _request_code(client).json()["nonce"]
+    url, body = queued[-1]
+    wrong_code = f"{(int(body['code']) + 1) % 1_000_000:06d}"
+    record = seed.collection(ROSTER_CODES_COLLECTION).document(body["key"])
+
+    def replay(task_body: dict, headers: dict | None = None) -> int:
+        """Post a task body as Cloud Tasks would, with the STARS key by default."""
+        headers = headers or {"X-API-Key": "test-stars-key"}
+        return client.post(
+            urlparse(url).path, json=task_body, headers=headers
+        ).status_code
+
+    assert replay(body, HEADERS) == 403
+    assert replay({**body, "email": "someone@example.com"}) == 422
+    assert replay({**body, "key": "0" * 64}) == 204
+    # A wrong code is a guess, so it counts towards the five-guess lockout.
+    assert replay({**body, "code": wrong_code}) == 204
+    assert record.get().to_dict()["attempts"] == 1
+    assert sent.call_count == 0
+
+    assert replay(body) == 204
+    params, options = sent.call_args[0]
+    assert params["to"] == [ADMIN_EMAIL]
+    assert body["code"] in params["text"]
+    assert options == {"idempotency_key": f"signin-code/{body['key']}"}
+
+    sent.side_effect = RuntimeError("resend is down")
+    assert replay(body) == 502
+    sent.side_effect = None
+
+    # Once the code is spent, a late retry must not email it again.
+    verified = client.post(
+        "/roster/auth/verify-code", json={"nonce": nonce, "code": body["code"]}
+    )
+    assert verified.status_code == 200
+    calls = sent.call_count
+    assert replay(body) == 204
+    assert sent.call_count == calls

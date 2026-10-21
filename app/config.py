@@ -35,6 +35,8 @@ CLOUD_TASKS_QUEUE_PATH = os.environ["CLOUD_TASKS_QUEUE_PATH"]
 # -- Cloud Tasks ---------------------------------------------------------------
 CLOUD_TASKS_TARGET_URL = os.environ["CLOUD_TASKS_TARGET_URL"]
 CLOUD_TASKS_API_KEY = os.environ["CLOUD_TASKS_API_KEY"]
+# Its own queue, so codes never wait behind expiry emails and are retried.
+CLOUD_TASKS_SIGNIN_QUEUE_PATH = os.environ["CLOUD_TASKS_SIGNIN_QUEUE_PATH"]
 CLOUD_TASKS_DISPATCH_DELAY_SECONDS = int(
     os.environ["CLOUD_TASKS_DISPATCH_DELAY_SECONDS"]
 )
