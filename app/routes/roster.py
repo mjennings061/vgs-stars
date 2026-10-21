@@ -12,10 +12,15 @@ from google.api_core.exceptions import Conflict
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ
+from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ, SCOPE_STARS
 from app.models.roster import ChangeState, Role, RosterEntry, RosterMonth, Status
 from app.security import require_admin, require_scope, verify_session
-from app.services import roster_auth, roster_availability, roster_months
+from app.services import (
+    email_service,
+    roster_auth,
+    roster_availability,
+    roster_months,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,17 @@ class RequestCodeResponse(BaseModel):
     """Nonce tying an emailed code to the browser that asked for it."""
 
     nonce: str
+
+
+class SendCodeRequest(BaseModel):
+    """Body of the Cloud Task that emails a sign-in code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+    name: str
+    code: str = Field(..., pattern=r"^\d{6}$")
+    key: str
 
 
 class VerifyCodeRequest(BaseModel):
@@ -102,6 +118,31 @@ async def request_code(request: RequestCodeRequest) -> RequestCodeResponse:
         ) from e
 
     return RequestCodeResponse(nonce=nonce)
+
+
+@router.post(
+    "/tasks/send-code",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_scope(SCOPE_STARS))],
+)
+async def send_code(request: SendCodeRequest) -> None:
+    """Email a queued sign-in code; called by Cloud Tasks.
+
+    Args:
+        request: The code and who it goes to.
+
+    Raises:
+        HTTPException: 502 if Resend fails, so Cloud Tasks retries.
+    """
+    try:
+        email_service.send_signin_code_email(
+            request.email, request.name, request.code, request.key
+        )
+    except email_service.EmailServiceError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Sign-in code email failed",
+        ) from e
 
 
 @router.post("/auth/verify-code", response_model=VerifyCodeResponse)

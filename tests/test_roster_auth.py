@@ -256,3 +256,34 @@ def test_key_with_no_scopes_is_refused(client, seed):
 
     response = client.get("/", headers={"X-API-Key": "legacy-key"})
     assert response.status_code == 401
+
+
+def test_send_code_task_needs_the_stars_key(client, seed, sent):
+    """Cloud Tasks sends the code; the roster key cannot; a Resend failure retries."""
+    seed.collection(DATABASE_USERS_COLLECTION).document("stars-key").set(
+        {
+            "name": "cloud-tasks",
+            "api_key": api_keys.hash_api_key("test-stars-key"),
+            "scopes": [SCOPE_STARS],
+        }
+    )
+    body = {"email": "a@example.com", "name": "A", "code": "123456", "key": "k"}
+
+    assert (
+        client.post("/roster/tasks/send-code", json=body, headers=HEADERS).status_code
+        == 403
+    )
+    assert sent.call_count == 0
+
+    stars = {"X-API-Key": "test-stars-key"}
+    assert (
+        client.post("/roster/tasks/send-code", json=body, headers=stars).status_code
+        == 204
+    )
+    assert sent.call_args[0][1] == {"idempotency_key": "signin-code/k"}
+
+    sent.side_effect = RuntimeError("resend is down")
+    assert (
+        client.post("/roster/tasks/send-code", json=body, headers=stars).status_code
+        == 502
+    )

@@ -29,6 +29,9 @@ os.environ.setdefault(
 )
 os.environ.setdefault("CLOUD_TASKS_API_KEY", "test_cloud_tasks_key")
 os.environ.setdefault("CLOUD_TASKS_DISPATCH_DELAY_SECONDS", "20")
+os.environ.setdefault(
+    "CLOUD_TASKS_SIGNIN_QUEUE_PATH", "projects/test/locations/test/queues/signin"
+)
 # Only used against the Firestore emulator, which needs a project to namespace by.
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "vgs-stars-test")
 
@@ -50,7 +53,7 @@ from app.config import (  # noqa: E402
 )
 from app.main import app  # noqa: E402
 from app.models.roster import Role  # noqa: E402
-from app.services import api_keys, database  # noqa: E402
+from app.services import api_keys, database, email_service  # noqa: E402
 
 READ_KEY = "test-roster-read-key"
 HEADERS = {"X-API-Key": READ_KEY}
@@ -129,6 +132,15 @@ def seed():
         _person(MEMBER_ID, MEMBER_NAME, Role.MEMBER, "arae@example.com")
     )
     return store
+
+
+@pytest.fixture(autouse=True)
+def _send_codes_inline(mocker):
+    """Send sign-in codes straight away instead of through Cloud Tasks."""
+    mocker.patch(
+        "app.services.cloud_tasks.enqueue_signin_code",
+        side_effect=email_service.send_signin_code_email,
+    )
 
 
 @pytest.fixture

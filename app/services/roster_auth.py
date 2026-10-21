@@ -22,7 +22,7 @@ from app.config import (
     STARS_ORG_UNIT_ID,
 )
 from app.models.roster import RosterCode, RosterPerson, RosterSession
-from app.services import database, email_service
+from app.services import cloud_tasks, database
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +154,13 @@ async def request_code(person_id: str) -> str:
     col = database.get_collection(ROSTER_CODES_COLLECTION)
     await col.document(_hash(nonce)).set(record.model_dump(by_alias=True, mode="json"))
 
-    # ponytail: sync Resend call makes a known person's request measurably slower.
+    # Queued, because Resend can take 30s and Cloud Run throttles CPU after a reply.
     try:
-        email_service.send_signin_code_email(person.email, person.name, code)
-        logger.info("Sign-in code sent for person %s", person_id)
-    except email_service.EmailServiceError:
-        # The contract is always 202, so a Resend failure must not surface here.
-        logger.exception("Sign-in code email failed for person %s", person_id)
+        cloud_tasks.enqueue_signin_code(person.email, person.name, code, _hash(nonce))
+        logger.info("Sign-in code queued for person %s", person_id)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # The contract is always 202, so a queue failure must not surface here.
+        logger.exception("Sign-in code queueing failed for person %s", person_id)
 
     return nonce
 
