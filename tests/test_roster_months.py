@@ -324,3 +324,29 @@ def test_me_reports_the_name_as_it_stands(client, admin_auth, seed):
 
     me = client.get("/roster/auth/me", headers=admin_auth)
     assert me.json()["name"] == "J Doe-Smith"
+
+
+def test_a_month_end_weekend_stays_on_its_saturdays_month(client, admin_auth):
+    """Sat 31 Oct and Sun 1 Nov 2026 sit on October, not split across two."""
+    october = _create(client, admin_auth, "2026-10").json()["dates"]
+    november = _create(client, admin_auth, "2026-11").json()["dates"]
+
+    assert october[-2:] == ["2026-10-31", "2026-11-01"]
+    assert november[0] == "2026-11-07"
+
+
+def test_a_month_end_sunday_is_edited_on_its_saturdays_month(client, admin_auth):
+    """Admins add and remove Sun 1 Nov on October; November refuses it."""
+    _create(client, admin_auth, "2026-10")
+    _create(client, admin_auth, "2026-11")
+    sunday = {"remove": ["2026-11-01"]}
+
+    removed = client.patch(
+        "/roster/months/2026-10/dates", json=sunday, headers=admin_auth
+    )
+    assert "2026-11-01" not in removed.json()["dates"]
+
+    refused = client.patch(
+        "/roster/months/2026-11/dates", json={"add": ["2026-11-01"]}, headers=admin_auth
+    )
+    assert refused.status_code == 400

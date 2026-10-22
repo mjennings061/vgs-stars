@@ -49,6 +49,20 @@ def is_frozen(freeze_at: date) -> bool:
     return datetime.now(ZoneInfo(ROSTER_TIMEZONE)).date() >= freeze_at
 
 
+def owner_month(day: date) -> str:
+    """Name the month whose grid a date sits on.
+
+    Args:
+        day: A flying date.
+
+    Returns:
+        Year and month, as 2026-10. A Sunday the 1st goes with its Saturday.
+    """
+    if day.day == 1 and day.weekday() == 6:
+        day -= timedelta(days=1)
+    return f"{day:%Y-%m}"
+
+
 def outside_month(start: date, days: list[date]) -> list[date]:
     """Pick out the dates that do not belong to a month.
 
@@ -57,9 +71,9 @@ def outside_month(start: date, days: list[date]) -> list[date]:
         days: Dates the caller wants to add or remove.
 
     Returns:
-        Those that fall in some other month.
+        Those that sit on some other month's grid.
     """
-    return [day for day in days if (day.year, day.month) != (start.year, start.month)]
+    return [day for day in days if owner_month(day) != f"{start:%Y-%m}"]
 
 
 def _key(month: str) -> str:
@@ -75,17 +89,19 @@ def _key(month: str) -> str:
 
 
 def _weekends(start: date) -> list[date]:
-    """List every Saturday and Sunday in a month.
+    """List every Saturday and Sunday on a month's grid.
 
     Args:
         start: The first of the month.
 
     Returns:
-        The weekend dates, in order.
+        The weekend dates, in order, with a Sunday the 1st after the month.
     """
     days = calendar.monthrange(start.year, start.month)[1]
-    dates = [start.replace(day=day) for day in range(1, days + 1)]
-    return [day for day in dates if day.weekday() >= 5]
+    # One day past the end catches a Sunday the 1st of the next month.
+    dates = [start + timedelta(days=offset) for offset in range(days + 1)]
+    month = f"{start:%Y-%m}"
+    return [d for d in dates if d.weekday() >= 5 and owner_month(d) == month]
 
 
 async def create_month(month: str) -> RosterMonth:
