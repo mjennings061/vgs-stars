@@ -1,7 +1,7 @@
 """Roster endpoints: sign-in, the squadron, flying months and change requests.
 
 A person signs in with a six-digit code emailed to them, and holds a session
-token afterwards. See ``docs/roster-api-contract.md`` for the contract.
+token afterwards. The spec is https://claude.ai/artifact/PxKjZRia9zLnGtDWJBoytp.
 """
 
 import logging
