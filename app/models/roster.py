@@ -71,12 +71,36 @@ class RosterMonth(BaseModel):
     # No frozen flag. It is computed from freeze_at, never stored.
 
 
+class RosterCourse(BaseModel):
+    """A named run of flying dates, keyed by ``{squadronId}:{courseId}``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    course_id: str
+    title: str
+    dates: list[date] = Field(default_factory=list)
+    freeze_at: date
+    # Removing only hides a course, so nothing about it is lost.
+    removed_by: str | None = None
+    removed_at: datetime | None = None
+
+
 class Status(str, Enum):
     """What a person said about one date, blank being no entry at all."""
 
     YES = "Y"
     NO = "N"
     TBC = "TBC"
+    # Away on a course elsewhere; nothing to do with the squadron's own courses.
+    EXTERNAL_COURSE = "C"
+
+
+class Part(str, Enum):
+    """Which half of the day a Y covers, None being all day."""
+
+    AM = "AM"
+    PM = "PM"
 
 
 class RosterEntry(BaseModel):
@@ -85,6 +109,7 @@ class RosterEntry(BaseModel):
     model_config = DOCUMENT
 
     status: Status
+    part: Part | None = None
     comment: str | None = None
     updated_by: str
     updated_by_name: str
@@ -98,6 +123,7 @@ class RosterPending(BaseModel):
 
     change_id: str
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
 
 
@@ -140,7 +166,9 @@ class RosterChange(BaseModel):
     date: date
     # Set on pending changes only.
     from_status: Status | None = None
+    from_part: Part | None = None
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
     state: ChangeState
     updated_by: str

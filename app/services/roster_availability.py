@@ -1,6 +1,6 @@
 """Who said what about each flying date, one document per person per month."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import quote
 
 from google.cloud import firestore
@@ -17,9 +17,8 @@ from app.models.roster import (
     RosterChange,
     RosterEntry,
     RosterPending,
-    Status,
 )
-from app.services import database
+from app.services import database, roster_months
 
 
 class PendingExists(Exception):
@@ -64,31 +63,38 @@ def _dump(model) -> dict:
     return model.model_dump(by_alias=True, mode="json")
 
 
-async def read_month(
-    month: str, person_ids: list[str]
-) -> dict[str, RosterAvailability]:
-    """Read a whole month of answers in one round trip.
+async def read_dates(
+    dates: list[date], person_ids: list[str]
+) -> dict[str, tuple[dict[str, RosterEntry], dict[str, RosterPending]]]:
+    """Read everyone's answers for a grid's dates, across every month they span.
 
     Args:
-        month: Year and month, as 2026-11.
+        dates: The grid's dates.
         person_ids: Everyone whose row the grid needs.
 
     Returns:
-        Each person's month by person id, missing anyone who has answered
-        nothing.
+        Each person's answers and pending changes on those dates, keyed by
+        person id, missing anyone who has answered none of them.
     """
-    if not person_ids:
-        return {}
-
+    wanted = {day.isoformat() for day in dates}
+    months = sorted({roster_months.owner_month(day) for day in dates})
     col = database.get_collection(ROSTER_AVAILABILITY_COLLECTION)
     # Fetching by id needs no composite index, which the emulator cannot enforce.
-    refs = [col.document(_key(month, person_id)) for person_id in person_ids]
+    refs = [col.document(_key(m, p)) for m in months for p in person_ids]
+    if not refs:
+        return {}
 
-    rows = {}
+    rows: dict[str, tuple[dict[str, RosterEntry], dict[str, RosterPending]]] = {}
     async for snapshot in database.get_client().get_all(refs):
         if snapshot.exists:
             record = RosterAvailability.model_validate(snapshot.to_dict())
-            rows[record.person_id] = record
+            entries, pending = rows.setdefault(record.person_id, ({}, {}))
+            entries.update(
+                {day: e for day, e in record.entries.items() if day in wanted}
+            )
+            pending.update(
+                {day: p for day, p in record.pending.items() if day in wanted}
+            )
     return rows
 
 
@@ -155,15 +161,17 @@ async def save(
     )
     changes = database.get_collection(ROSTER_CHANGES_COLLECTION)
 
-    def change(state: ChangeState, from_status: Status | None = None) -> RosterChange:
-        """Log this write in the given state."""
+    def change(state: ChangeState, current: RosterEntry | None = None) -> RosterChange:
+        """Log this write in the given state, and what it replaces if pending."""
         return RosterChange(
             squadron_id=STARS_ORG_UNIT_ID,
             month=month,
             person_id=person_id,
             date=day,
-            from_status=from_status,
+            from_status=current.status if current else None,
+            from_part=current.part if current else None,
             to_status=entry.status,
+            to_part=entry.part,
             reason=entry.comment,
             state=state,
             updated_by=entry.updated_by,
@@ -186,13 +194,13 @@ async def save(
         if needs_approval:
             if pending:
                 raise PendingExists
-            if current and current.status != entry.status:
+            # AM to PM is a change of answer too, so the part is compared.
+            answer = (entry.status, entry.part)
+            if current and (current.status, current.part) != answer:
                 if not entry.comment:
                     raise ReasonRequired
                 change_ref = changes.document()
-                transaction.set(
-                    change_ref, _dump(change(ChangeState.PENDING, current.status))
-                )
+                transaction.set(change_ref, _dump(change(ChangeState.PENDING, current)))
                 transaction.set(
                     ref,
                     {
@@ -201,6 +209,7 @@ async def save(
                                 RosterPending(
                                     change_id=change_ref.id,
                                     to_status=entry.status,
+                                    to_part=entry.part,
                                     reason=entry.comment,
                                 )
                             )
@@ -267,6 +276,7 @@ async def decide(
         if approve:
             entry = RosterEntry(
                 status=record.to_status,
+                part=record.to_part,
                 comment=record.reason,
                 updated_by=record.updated_by,
                 updated_by_name=record.updated_by_name,

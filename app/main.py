@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import SCOPE_STARS, configure_logging
-from app.routes import auths, health, roster, unsubscribe
+from app.routes import auths, health, roster, roster_courses, unsubscribe
 from app.security import require_scope
 from app.services import database
 
@@ -112,6 +112,7 @@ app.include_router(health.router)
 app.include_router(auths.router)
 app.include_router(unsubscribe.router)
 app.include_router(roster.router)
+app.include_router(roster_courses.router)
 
 
 # Root endpoint
@@ -145,7 +146,14 @@ async def root(_: dict = Depends(require_scope(SCOPE_STARS))):
             "roster_month_dates": "PATCH /roster/months/{month}/dates",
             "roster_month_freeze": "PATCH /roster/months/{month}/freeze",
             "roster_grid": "GET /roster/months/{month}/grid",
-            "roster_set_entry": "PUT /roster/months/{month}/people/{person_id}/{day}",
+            "roster_set_entry": "PUT /roster/people/{person_id}/days/{day}",
+            "roster_courses": "GET /roster/courses",
+            "roster_create_course": "POST /roster/courses",
+            "roster_course": "GET /roster/courses/{course_id}",
+            "roster_course_dates": "PATCH /roster/courses/{course_id}/dates",
+            "roster_course_freeze": "PATCH /roster/courses/{course_id}/freeze",
+            "roster_remove_course": "DELETE /roster/courses/{course_id}",
+            "roster_course_grid": "GET /roster/courses/{course_id}/grid",
             "roster_changes": "GET /roster/changes",
             "roster_approve": "POST /roster/changes/{change_id}/approve",
             "roster_reject": "POST /roster/changes/{change_id}/reject",

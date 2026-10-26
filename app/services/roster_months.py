@@ -161,12 +161,64 @@ async def list_months() -> list[str]:
     return sorted((month for month in months if month), reverse=True)
 
 
+async def get_months(months: set[str]) -> list[RosterMonth]:
+    """Read several months in one round trip.
+
+    Args:
+        months: Months as 2026-11.
+
+    Returns:
+        Those that exist, in no particular order.
+    """
+    col = database.get_collection(ROSTER_MONTHS_COLLECTION)
+    refs = [col.document(_key(month)) for month in months]
+    if not refs:
+        return []
+
+    return [
+        RosterMonth.model_validate(snapshot.to_dict())
+        async for snapshot in database.get_client().get_all(refs)
+        if snapshot.exists
+    ]
+
+
+async def update_dates(ref, add: list[date], remove: list[date]) -> dict | None:
+    """Add and remove dates on a month or course, leaving any answers in place.
+
+    A date in both lists ends up on the grid, since removals are applied first.
+
+    Args:
+        ref: The month or course document.
+        add: Dates to put on the grid.
+        remove: Dates to take off it.
+
+    Returns:
+        The updated document, or None if it does not exist or was removed.
+    """
+    # ISO strings are what the document holds, and they sort chronologically.
+    additions = {day.isoformat() for day in add}
+    removals = {day.isoformat() for day in remove}
+
+    @firestore.async_transactional
+    async def apply(transaction) -> dict | None:
+        """Rewrite the whole list at once, so two admins cannot lose an edit."""
+        snapshot = await ref.get(transaction=transaction)
+        data = snapshot.to_dict() or {}
+        if not snapshot.exists or data.get("removedAt"):
+            return None
+
+        dates = sorted((set(data.get("dates") or []) - removals) | additions)
+        transaction.update(ref, {"dates": dates})
+        return {**data, "dates": dates}
+
+    # Raising in here would fire again on every retry, so the 404 is raised outside.
+    return await apply(database.get_client().transaction())
+
+
 async def patch_dates(
     month: str, add: list[date], remove: list[date]
 ) -> RosterMonth | None:
     """Add and remove flying dates, leaving any answers in place.
-
-    A date in both lists ends up on the grid, since removals are applied first.
 
     Args:
         month: Year and month, as 2026-11.
@@ -176,26 +228,8 @@ async def patch_dates(
     Returns:
         The updated month, or None if there is no such month.
     """
-    client = database.get_client()
     ref = database.get_collection(ROSTER_MONTHS_COLLECTION).document(_key(month))
-    # ISO strings are what the document holds, and they sort chronologically.
-    additions = {day.isoformat() for day in add}
-    removals = {day.isoformat() for day in remove}
-
-    @firestore.async_transactional
-    async def apply(transaction) -> dict | None:
-        """Rewrite the whole list at once, so two admins cannot lose an edit."""
-        snapshot = await ref.get(transaction=transaction)
-        if not snapshot.exists:
-            return None
-
-        data = snapshot.to_dict() or {}
-        dates = sorted((set(data.get("dates") or []) - removals) | additions)
-        transaction.update(ref, {"dates": dates})
-        return {**data, "dates": dates}
-
-    # Raising in here would fire again on every retry, so the 404 is raised outside.
-    record = await apply(client.transaction())
+    record = await update_dates(ref, add, remove)
     if record is None:
         return None
     return RosterMonth.model_validate(record)

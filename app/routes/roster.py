@@ -1,7 +1,7 @@
-"""Roster endpoints: sign-in, the squadron, flying months and change requests.
+"""Roster endpoints: sign-in, the squadron, months, courses and change requests.
 
 A person signs in with a six-digit code emailed to them, and holds a session
-token afterwards. See ``docs/roster-api-contract.md`` for the contract.
+token afterwards. The spec is https://claude.ai/artifact/PxKjZRia9zLnGtDWJBoytp.
 """
 
 import logging
@@ -9,20 +9,31 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.api_core.exceptions import Conflict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ, SCOPE_STARS
-from app.models.roster import ChangeState, Role, RosterEntry, RosterMonth, Status
+from app.models.roster import (
+    ChangeState,
+    Part,
+    Role,
+    RosterEntry,
+    RosterMonth,
+    Status,
+)
 from app.security import require_admin, require_scope, verify_session
 from app.services import (
     email_service,
     roster_auth,
     roster_availability,
+    roster_courses,
     roster_months,
 )
 
 logger = logging.getLogger(__name__)
+
+# A course runs a week or two, so two months of dates is already generous.
+MAX_GRID_DATES = 62
 
 router = APIRouter(prefix="/roster", tags=["roster"])
 
@@ -221,6 +232,25 @@ def _month_start(month: str) -> date:
         ) from e
 
 
+def check_freeze(freeze_at: date, start: date, name: str) -> None:
+    """Refuse a freeze date more than a year from the grid it belongs to.
+
+    Args:
+        freeze_at: The requested freeze date.
+        start: The grid's first day.
+        name: The month or course, for the message.
+
+    Raises:
+        HTTPException: 400 if the freeze date is over a year away.
+    """
+    # Catches a mistyped year, which would otherwise leave the grid unfrozen.
+    if abs((freeze_at - start).days) > 365:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Freeze date must be within a year of {name}",
+        )
+
+
 class PersonResponse(BaseModel):
     """One squadron member, listing its fields so no email can ride along."""
 
@@ -288,8 +318,8 @@ class PatchDatesRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    add: list[date] = Field(default_factory=list)
-    remove: list[date] = Field(default_factory=list)
+    add: list[date] = Field(default_factory=list, max_length=MAX_GRID_DATES)
+    remove: list[date] = Field(default_factory=list, max_length=MAX_GRID_DATES)
 
 
 class PatchFreezeRequest(BaseModel):
@@ -436,13 +466,7 @@ async def patch_month_freeze(
         HTTPException: 400 for a malformed month or a wild freeze date, 404 if
             it does not exist.
     """
-    start = _month_start(month)
-    # Catches a mistyped year, which would otherwise leave the month unfrozen.
-    if abs((request.freeze_at - start).days) > 365:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Freeze date must be within a year of {month}",
-        )
+    check_freeze(request.freeze_at, _month_start(month), month)
 
     record = await roster_months.set_freeze(month, request.freeze_at)
     if record is None:
@@ -461,6 +485,7 @@ class EntryResponse(BaseModel):
     )
 
     status: Status
+    part: Part | None = None
     comment: str | None = None
     updated_by: str
     updated_by_name: str
@@ -476,6 +501,7 @@ class PendingResponse(BaseModel):
 
     change_id: str
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
 
 
@@ -492,14 +518,18 @@ class GridRow(BaseModel):
 
 
 class GridResponse(BaseModel):
-    """Everything the grid needs, in one call."""
+    """Everything a month's or a course's grid needs, in one call."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
-    month: str
+    month: str | None = None
+    course_id: str | None = None
+    title: str | None = None
     dates: list[date]
     freeze_at: date
     frozen: bool
+    # A date on a month and a course freezes when the first of them does.
+    frozen_dates: list[date]
     rows: list[GridRow]
 
 
@@ -511,7 +541,17 @@ class SetEntryRequest(BaseModel):
     )
 
     status: Status
+    part: Part | None = None
     comment: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
+
+    @model_validator(mode="after")
+    def _check_answer(self) -> "SetEntryRequest":
+        """Refuse a C with no comment, or a half day on anything but Y."""
+        if self.status == Status.EXTERNAL_COURSE and not self.comment:
+            raise ValueError("C needs a comment saying which external course")
+        if self.part is not None and self.status != Status.YES:
+            raise ValueError("AM and PM only go with Y")
+        return self
 
 
 class SetEntryResponse(BaseModel):
@@ -535,7 +575,9 @@ class ChangeResponse(BaseModel):
     name: str
     date: date
     from_status: Status | None = None
+    from_part: Part | None = None
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
     state: ChangeState
     updated_by: str
@@ -562,6 +604,49 @@ class RejectRequest(BaseModel):
     comment: str = Field(..., min_length=1, max_length=ROSTER_COMMENT_MAX_LENGTH)
 
 
+async def grid_rows(
+    dates: list[date], freeze_at: date
+) -> tuple[list[GridRow], list[date]]:
+    """Build every person's row and the locked dates for one grid.
+
+    Args:
+        dates: The grid's dates.
+        freeze_at: The grid's own freeze date.
+
+    Returns:
+        The rows, by name, and the dates that have frozen on any grid.
+    """
+    people = await roster_auth.list_people()
+    answers = await roster_availability.read_dates(
+        dates, [person.person_id for person in people]
+    )
+    locks = await roster_courses.lock_dates(dates)
+
+    rows = []
+    for person in people:
+        entries, pending = answers.get(person.person_id, ({}, {}))
+        rows.append(
+            GridRow(
+                person_id=person.person_id,
+                name=person.name,
+                instruct_cat=person.instruct_cat,
+                entries={
+                    day: EntryResponse.model_validate(entry)
+                    for day, entry in entries.items()
+                },
+                pending={
+                    day: PendingResponse.model_validate(change)
+                    for day, change in pending.items()
+                },
+            )
+        )
+
+    frozen = [
+        day for day in dates if roster_months.is_frozen(locks.get(day, freeze_at))
+    ]
+    return rows, frozen
+
+
 @router.get(
     "/months/{month}/grid",
     response_model=GridResponse,
@@ -584,78 +669,51 @@ async def read_grid(month: str) -> GridResponse:
     if record is None:
         raise _unknown_month()
 
-    people = await roster_auth.list_people()
-    answers = await roster_availability.read_month(
-        month, [person.person_id for person in people]
-    )
-
-    rows = []
-    for person in people:
-        row = GridRow(
-            person_id=person.person_id,
-            name=person.name,
-            instruct_cat=person.instruct_cat,
-        )
-        answer = answers.get(person.person_id)
-        if answer:
-            row.entries = {
-                day: EntryResponse.model_validate(entry)
-                for day, entry in answer.entries.items()
-            }
-            row.pending = {
-                day: PendingResponse.model_validate(pending)
-                for day, pending in answer.pending.items()
-            }
-        rows.append(row)
-
+    rows, frozen_dates = await grid_rows(record.dates, record.freeze_at)
     return GridResponse(
         month=record.month,
         dates=record.dates,
         freeze_at=record.freeze_at,
         frozen=roster_months.is_frozen(record.freeze_at),
+        frozen_dates=frozen_dates,
         rows=rows,
     )
 
 
 @router.put(
-    "/months/{month}/people/{person_id}/{day}",
+    "/people/{person_id}/days/{day}",
     response_model=SetEntryResponse,
     response_model_exclude_none=True,
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def set_availability(
-    month: str,
     person_id: str,
     day: date,
     request: SetEntryRequest,
     session: dict = Depends(verify_session),
 ) -> SetEntryResponse:
-    """Set one person's answer for one date.
+    """Set one person's answer for one date, whichever grids hold it.
 
     Args:
-        month: Year and month, as 2026-11.
         person_id: Whose row is being written.
         day: The flying date.
-        request: The answer and its optional comment.
+        request: The answer, its half of the day and its comment.
         session: The caller's resolved session.
 
     Returns:
         Whether the answer was written, or the id of the change it became.
 
     Raises:
-        HTTPException: 400 for a malformed month or a date off the grid, 404 if
-            the month or the person is unknown, 403 if the caller may not do
-            this, 409 if the date already has a pending change, 422 if a
-            change after the freeze gives no reason.
+        HTTPException: 400 for a date on no month or course, 404 if the person
+            is unknown, 403 if the caller may not do this, 409 if the date
+            already has a pending change, 422 if a change after the freeze
+            gives no reason.
     """
-    _month_start(month)
-    record = await roster_months.get_month(month)
-    if record is None:
-        raise _unknown_month()
-
-    if day not in record.dates:
+    lock = (await roster_courses.lock_dates([day])).get(day)
+    if lock is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{day.isoformat()} is not a flying date in {month}",
+            detail=f"{day.isoformat()} is not on any month or course",
         )
 
     if await roster_auth.get_person(person_id) is None:
@@ -672,17 +730,19 @@ async def set_availability(
 
     try:
         change_id = await roster_availability.save(
-            month,
+            # Answers live under the month that holds the date, course or not.
+            roster_months.owner_month(day),
             person_id,
             day.isoformat(),
             RosterEntry(
                 status=request.status,
+                part=request.part,
                 comment=request.comment,
                 updated_by=session["personId"],
                 updated_by_name=session["name"],
                 updated_at=datetime.now(UTC),
             ),
-            needs_approval=not is_admin and roster_months.is_frozen(record.freeze_at),
+            needs_approval=not is_admin and roster_months.is_frozen(lock),
         )
     except roster_availability.PendingExists as e:
         raise HTTPException(
@@ -696,7 +756,8 @@ async def set_availability(
             detail=[
                 {
                     "loc": ["body", "comment"],
-                    "msg": f"{month} is frozen, so changing an answer needs a reason",
+                    "msg": f"{day.isoformat()} is frozen, so changing an answer"
+                    " needs a reason",
                     "type": "missing",
                 }
             ],
