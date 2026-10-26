@@ -547,8 +547,8 @@ class SetEntryRequest(BaseModel):
     @model_validator(mode="after")
     def _check_answer(self) -> "SetEntryRequest":
         """Refuse a C with no comment, or a half day on anything but Y."""
-        if self.status == Status.COURSE and not self.comment:
-            raise ValueError("C needs a comment saying which course")
+        if self.status == Status.EXTERNAL_COURSE and not self.comment:
+            raise ValueError("C needs a comment saying which external course")
         if self.part is not None and self.status != Status.YES:
             raise ValueError("AM and PM only go with Y")
         return self

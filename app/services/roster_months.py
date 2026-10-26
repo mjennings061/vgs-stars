@@ -172,6 +172,9 @@ async def get_months(months: set[str]) -> list[RosterMonth]:
     """
     col = database.get_collection(ROSTER_MONTHS_COLLECTION)
     refs = [col.document(_key(month)) for month in months]
+    if not refs:
+        return []
+
     return [
         RosterMonth.model_validate(snapshot.to_dict())
         async for snapshot in database.get_client().get_all(refs)

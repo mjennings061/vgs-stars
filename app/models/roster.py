@@ -92,7 +92,8 @@ class Status(str, Enum):
     YES = "Y"
     NO = "N"
     TBC = "TBC"
-    COURSE = "C"
+    # Away on a course elsewhere; nothing to do with the squadron's own courses.
+    EXTERNAL_COURSE = "C"
 
 
 class Part(str, Enum):

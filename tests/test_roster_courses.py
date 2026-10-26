@@ -132,9 +132,9 @@ def test_a_locked_course_locks_the_date_on_an_open_month(
         }
     )
     course_id = _course(client, admin_auth, [date.fromisoformat(SATURDAY)])
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    # Fixed and past, so it stays within a year of the course whenever this runs.
     path = f"/roster/courses/{course_id}/freeze"
-    response = _send(client, "PATCH", path, admin_auth, {"freezeAt": yesterday})
+    response = _send(client, "PATCH", path, admin_auth, {"freezeAt": "2026-10-01"})
     assert response.status_code == 200, response.text
 
     month = _grid(client, f"/roster/months/{MONTH}/grid")
@@ -146,6 +146,13 @@ def test_a_locked_course_locks_the_date_on_an_open_month(
     response = _answer(client, member_auth, SATURDAY, "N", comment="Work")
     assert response.json()["applied"] is False
     assert _answer(client, member_auth, SUNDAY, "N").json() == {"applied": True}
+
+    # Saturday is on both grids, so both show one answer and one waiting change.
+    for path in (f"/roster/months/{MONTH}/grid", f"/roster/courses/{course_id}/grid"):
+        rows = _grid(client, path)["rows"]
+        row = next(row for row in rows if row["personId"] == MEMBER_ID)
+        assert row["entries"][SATURDAY]["status"] == "Y"
+        assert row["pending"][SATURDAY]["toStatus"] == "N"
 
 
 def test_dates_freeze_and_remove_answer_as_the_spec_says(

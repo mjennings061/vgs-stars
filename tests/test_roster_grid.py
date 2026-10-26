@@ -212,8 +212,8 @@ def test_setting_a_date_needs_the_dashboard_key(client, member_auth):
 
 
 @pytest.mark.usefixtures("open_month")
-def test_half_days_and_course_answers_show_on_the_grid(client, member_auth):
-    """Y PM and C with a course name both read back as they were saved."""
+def test_half_days_and_external_course_answers_show_on_the_grid(client, member_auth):
+    """Y PM and C naming an external course both read back as they were saved."""
     assert _set(client, member_auth, MEMBER_ID, SATURDAY, "Y", part="PM").json() == {
         "applied": True
     }
@@ -229,7 +229,7 @@ def test_half_days_and_course_answers_show_on_the_grid(client, member_auth):
 
 @pytest.mark.usefixtures("open_month")
 def test_c_needs_a_comment_and_half_days_need_a_y(client, member_auth):
-    """Rule 11: nobody can say C without saying which course, or N in the morning."""
+    """Rule 11: C must name the external course, and only a Y can be a half day."""
     assert _set(client, member_auth, MEMBER_ID, SATURDAY, "C").status_code == 422
     assert (
         _set(client, member_auth, MEMBER_ID, SATURDAY, "C", comment="  ").status_code

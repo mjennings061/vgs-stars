@@ -26,15 +26,16 @@ def _ref(course_id: str):
 
 
 def _live(data: dict | None) -> RosterCourse | None:
-    """Read a stored course, treating a removed one as gone.
+    """Read a stored course, treating a removed or emptied one as gone.
 
     Args:
         data: The document, or None if there is none.
 
     Returns:
-        The course, or None if it is missing or removed.
+        The course, or None if it is missing, removed or has no dates left.
     """
-    if not data or data.get("removedAt"):
+    # Two admins trimming at once can leave no dates, and the list cannot draw that.
+    if not data or data.get("removedAt") or not data.get("dates"):
         return None
     return RosterCourse.model_validate(data)
 
