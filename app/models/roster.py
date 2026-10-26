@@ -77,6 +77,14 @@ class Status(str, Enum):
     YES = "Y"
     NO = "N"
     TBC = "TBC"
+    COURSE = "C"
+
+
+class Part(str, Enum):
+    """Which half of the day a Y covers, None being all day."""
+
+    AM = "AM"
+    PM = "PM"
 
 
 class RosterEntry(BaseModel):
@@ -85,6 +93,7 @@ class RosterEntry(BaseModel):
     model_config = DOCUMENT
 
     status: Status
+    part: Part | None = None
     comment: str | None = None
     updated_by: str
     updated_by_name: str
@@ -98,6 +107,7 @@ class RosterPending(BaseModel):
 
     change_id: str
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
 
 
@@ -140,7 +150,9 @@ class RosterChange(BaseModel):
     date: date
     # Set on pending changes only.
     from_status: Status | None = None
+    from_part: Part | None = None
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
     state: ChangeState
     updated_by: str

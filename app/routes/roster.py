@@ -9,11 +9,18 @@ from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.api_core.exceptions import Conflict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ, SCOPE_STARS
-from app.models.roster import ChangeState, Role, RosterEntry, RosterMonth, Status
+from app.models.roster import (
+    ChangeState,
+    Part,
+    Role,
+    RosterEntry,
+    RosterMonth,
+    Status,
+)
 from app.security import require_admin, require_scope, verify_session
 from app.services import (
     email_service,
@@ -461,6 +468,7 @@ class EntryResponse(BaseModel):
     )
 
     status: Status
+    part: Part | None = None
     comment: str | None = None
     updated_by: str
     updated_by_name: str
@@ -476,6 +484,7 @@ class PendingResponse(BaseModel):
 
     change_id: str
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
 
 
@@ -511,7 +520,17 @@ class SetEntryRequest(BaseModel):
     )
 
     status: Status
+    part: Part | None = None
     comment: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
+
+    @model_validator(mode="after")
+    def _check_answer(self) -> "SetEntryRequest":
+        """Refuse a C with no comment, or a half day on anything but Y."""
+        if self.status == Status.COURSE and not self.comment:
+            raise ValueError("C needs a comment saying which course")
+        if self.part is not None and self.status != Status.YES:
+            raise ValueError("AM and PM only go with Y")
+        return self
 
 
 class SetEntryResponse(BaseModel):
@@ -535,7 +554,9 @@ class ChangeResponse(BaseModel):
     name: str
     date: date
     from_status: Status | None = None
+    from_part: Part | None = None
     to_status: Status
+    to_part: Part | None = None
     reason: str | None = None
     state: ChangeState
     updated_by: str
@@ -635,7 +656,7 @@ async def set_availability(
         month: Year and month, as 2026-11.
         person_id: Whose row is being written.
         day: The flying date.
-        request: The answer and its optional comment.
+        request: The answer, its half of the day and its comment.
         session: The caller's resolved session.
 
     Returns:
@@ -677,6 +698,7 @@ async def set_availability(
             day.isoformat(),
             RosterEntry(
                 status=request.status,
+                part=request.part,
                 comment=request.comment,
                 updated_by=session["personId"],
                 updated_by_name=session["name"],

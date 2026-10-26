@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.config import (
+    ROSTER_AVAILABILITY_COLLECTION,
     ROSTER_CHANGES_COLLECTION,
     ROSTER_MONTHS_COLLECTION,
     STARS_ORG_UNIT_ID,
@@ -67,7 +68,9 @@ def frozen_month(seed):
     return seed
 
 
-def _set(client, auth, person_id: str, day: str, status: str, *, comment=None):
+def _set(
+    client, auth, person_id: str, day: str, status: str, *, comment=None, part=None
+):
     """Set one person's answer for one date.
 
     Args:
@@ -75,13 +78,14 @@ def _set(client, auth, person_id: str, day: str, status: str, *, comment=None):
         auth: The caller's Authorization header.
         person_id: Whose row to write.
         day: The flying date.
-        status: Y, N or TBC.
+        status: Y, N, TBC or C.
         comment: Optional note shown on the grid.
+        part: AM or PM for a half day.
 
     Returns:
         The HTTP response.
     """
-    body = {"status": status}
+    body = {"status": status, "part": part}
     if comment is not None:
         body["comment"] = comment
     return client.put(
@@ -192,6 +196,61 @@ def test_setting_a_date_needs_a_session(client):
     assert response.status_code == 401
 
 
+@pytest.mark.usefixtures("open_month")
+def test_half_days_and_course_answers_show_on_the_grid(client, member_auth):
+    """Y PM and C with a course name both read back as they were saved."""
+    assert _set(client, member_auth, MEMBER_ID, SATURDAY, "Y", part="PM").json() == {
+        "applied": True
+    }
+    assert _set(
+        client, member_auth, MEMBER_ID, SUNDAY, "C", comment="ACCP at Syerston"
+    ).json() == {"applied": True}
+
+    entries = _row(client, MEMBER_ID)["entries"]
+    assert (entries[SATURDAY]["status"], entries[SATURDAY]["part"]) == ("Y", "PM")
+    assert entries[SUNDAY]["status"] == "C"
+    assert entries[SUNDAY]["comment"] == "ACCP at Syerston"
+
+
+@pytest.mark.usefixtures("open_month")
+def test_c_needs_a_comment_and_half_days_need_a_y(client, member_auth):
+    """Rule 11: nobody can say C without saying which course, or N in the morning."""
+    assert _set(client, member_auth, MEMBER_ID, SATURDAY, "C").status_code == 422
+    assert (
+        _set(client, member_auth, MEMBER_ID, SATURDAY, "C", comment="  ").status_code
+        == 422
+    )
+    assert (
+        _set(client, member_auth, MEMBER_ID, SATURDAY, "N", part="AM").status_code
+        == 422
+    )
+    assert _row(client, MEMBER_ID)["entries"] == {}
+
+
+@pytest.mark.usefixtures("frozen_month")
+def test_a_frozen_morning_moved_to_the_afternoon_waits_for_an_admin(
+    client, admin_auth, member_auth
+):
+    """Rule 2: AM to PM is a change, and approval writes the PM."""
+    assert (
+        _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y", part="AM").status_code == 200
+    )
+    response = _set(
+        client, member_auth, MEMBER_ID, SATURDAY, "Y", part="PM", comment="Late shift"
+    )
+    assert response.json()["applied"] is False
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["part"] == "AM"
+    assert row["pending"][SATURDAY]["toPart"] == "PM"
+    [pending] = _changes(client, "pending")
+    assert (pending["fromPart"], pending["toPart"]) == ("AM", "PM")
+
+    url = f"/roster/changes/{response.json()['changeId']}/approve"
+    assert client.post(url, headers=admin_auth).status_code == 200
+    assert _row(client, MEMBER_ID)["entries"][SATURDAY]["part"] == "PM"
+
+
 @pytest.mark.usefixtures("frozen_month")
 def test_filling_a_blank_after_the_freeze_still_lands(client, member_auth):
     """New information, not a reversal, so the exec wants it straight away."""
@@ -294,6 +353,7 @@ def test_changing_a_frozen_answer_waits_for_an_admin(client, admin_auth, member_
     assert row["pending"][SATURDAY] == {
         "changeId": change_id,
         "toStatus": "N",
+        "toPart": None,
         "reason": "Work",
     }
 
@@ -419,3 +479,45 @@ def test_unknown_change_is_404(client, admin_auth):
     """A stale link from the dashboard must say so."""
     response = client.post("/roster/changes/nope/approve", headers=admin_auth)
     assert response.status_code == 404
+
+
+def test_answers_saved_before_half_days_read_as_all_day(
+    client, frozen_month, admin_auth
+):
+    """First run after deploy: old answers and old requests have no part at all."""
+    stamp = {"updatedBy": MEMBER_ID, "updatedByName": MEMBER_NAME}
+    stamp["updatedAt"] = "2026-10-01T19:00:00+00:00"
+    change = frozen_month.collection(ROSTER_CHANGES_COLLECTION).document("old")
+    change.set(
+        {
+            "squadronId": STARS_ORG_UNIT_ID,
+            "month": MONTH,
+            "personId": MEMBER_ID,
+            "date": SATURDAY,
+            "fromStatus": "N",
+            "toStatus": "Y",
+            "reason": "Free now",
+            "state": "pending",
+            **stamp,
+        }
+    )
+    frozen_month.collection(ROSTER_AVAILABILITY_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:{MONTH}:{MEMBER_ID}"
+    ).set(
+        {
+            "squadronId": STARS_ORG_UNIT_ID,
+            "month": MONTH,
+            "personId": MEMBER_ID,
+            "entries": {SATURDAY: {"status": "N", **stamp}},
+            "pending": {SATURDAY: {"changeId": "old", "toStatus": "Y"}},
+        }
+    )
+
+    row = _row(client, MEMBER_ID)
+    assert row["entries"][SATURDAY]["part"] is None
+    assert row["pending"][SATURDAY]["toPart"] is None
+
+    url = "/roster/changes/old/approve"
+    assert client.post(url, headers=admin_auth).status_code == 200
+    entry = _row(client, MEMBER_ID)["entries"][SATURDAY]
+    assert (entry["status"], entry["part"]) == ("Y", None)

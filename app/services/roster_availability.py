@@ -17,7 +17,6 @@ from app.models.roster import (
     RosterChange,
     RosterEntry,
     RosterPending,
-    Status,
 )
 from app.services import database
 
@@ -155,15 +154,17 @@ async def save(
     )
     changes = database.get_collection(ROSTER_CHANGES_COLLECTION)
 
-    def change(state: ChangeState, from_status: Status | None = None) -> RosterChange:
-        """Log this write in the given state."""
+    def change(state: ChangeState, current: RosterEntry | None = None) -> RosterChange:
+        """Log this write in the given state, and what it replaces if pending."""
         return RosterChange(
             squadron_id=STARS_ORG_UNIT_ID,
             month=month,
             person_id=person_id,
             date=day,
-            from_status=from_status,
+            from_status=current.status if current else None,
+            from_part=current.part if current else None,
             to_status=entry.status,
+            to_part=entry.part,
             reason=entry.comment,
             state=state,
             updated_by=entry.updated_by,
@@ -186,13 +187,13 @@ async def save(
         if needs_approval:
             if pending:
                 raise PendingExists
-            if current and current.status != entry.status:
+            # AM to PM is a change of answer too, so the part is compared.
+            answer = (entry.status, entry.part)
+            if current and (current.status, current.part) != answer:
                 if not entry.comment:
                     raise ReasonRequired
                 change_ref = changes.document()
-                transaction.set(
-                    change_ref, _dump(change(ChangeState.PENDING, current.status))
-                )
+                transaction.set(change_ref, _dump(change(ChangeState.PENDING, current)))
                 transaction.set(
                     ref,
                     {
@@ -201,6 +202,7 @@ async def save(
                                 RosterPending(
                                     change_id=change_ref.id,
                                     to_status=entry.status,
+                                    to_part=entry.part,
                                     reason=entry.comment,
                                 )
                             )
@@ -267,6 +269,7 @@ async def decide(
         if approve:
             entry = RosterEntry(
                 status=record.to_status,
+                part=record.to_part,
                 comment=record.reason,
                 updated_by=record.updated_by,
                 updated_by_name=record.updated_by_name,
