@@ -71,6 +71,21 @@ class RosterMonth(BaseModel):
     # No frozen flag. It is computed from freeze_at, never stored.
 
 
+class RosterCourse(BaseModel):
+    """A named run of flying dates, keyed by ``{squadronId}:{courseId}``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    course_id: str
+    title: str
+    dates: list[date] = Field(default_factory=list)
+    freeze_at: date
+    # Removing only hides a course, so nothing about it is lost.
+    removed_by: str | None = None
+    removed_at: datetime | None = None
+
+
 class Status(str, Enum):
     """What a person said about one date, blank being no entry at all."""
 

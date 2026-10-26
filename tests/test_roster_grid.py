@@ -71,7 +71,7 @@ def frozen_month(seed):
 def _set(
     client, auth, person_id: str, day: str, status: str, *, comment=None, part=None
 ):
-    """Set one person's answer for one date.
+    """Set one person's answer for one date, as the dashboard does.
 
     Args:
         client: The test client.
@@ -89,7 +89,9 @@ def _set(
     if comment is not None:
         body["comment"] = comment
     return client.put(
-        f"/roster/months/{MONTH}/people/{person_id}/{day}", json=body, headers=auth
+        f"/roster/people/{person_id}/days/{day}",
+        json=body,
+        headers={**HEADERS, **auth},
     )
 
 
@@ -191,7 +193,20 @@ def test_answering_for_someone_who_has_left_is_refused(client, admin_auth):
 def test_setting_a_date_needs_a_session(client):
     """Reading is behind the squadron password, writing is behind a code."""
     response = client.put(
-        f"/roster/months/{MONTH}/people/{MEMBER_ID}/{SATURDAY}", json={"status": "Y"}
+        f"/roster/people/{MEMBER_ID}/days/{SATURDAY}",
+        json={"status": "Y"},
+        headers=HEADERS,
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.usefixtures("open_month")
+def test_setting_a_date_needs_the_dashboard_key(client, member_auth):
+    """A sign-in token on its own does not work from outside the dashboard."""
+    response = client.put(
+        f"/roster/people/{MEMBER_ID}/days/{SATURDAY}",
+        json={"status": "Y"},
+        headers=member_auth,
     )
     assert response.status_code == 401
 

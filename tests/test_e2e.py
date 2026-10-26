@@ -259,9 +259,9 @@ def test_patch_freeze(admin_auth):
 def test_set_availability_and_read_the_grid(admin_auth):
     """An answer is written and the whole squadron can see it, for real."""
     response = requests.put(
-        _url(f"/roster/months/{MONTH}/people/{PERSON_ID}/{WEEKDAY}"),
+        _url(f"/roster/people/{PERSON_ID}/days/{WEEKDAY}"),
         json={"status": "N", "comment": "Called in to work"},
-        headers=admin_auth,
+        headers={**HEADERS, **admin_auth},
         timeout=TIMEOUT,
     )
     assert response.status_code == 200, response.text
