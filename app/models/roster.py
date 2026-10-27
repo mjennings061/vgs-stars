@@ -86,6 +86,21 @@ class RosterCourse(BaseModel):
     removed_at: datetime | None = None
 
 
+class RosterDay(BaseModel):
+    """The note boxes above one date, keyed by ``{squadronId}:{date}``."""
+
+    model_config = DOCUMENT
+
+    squadron_id: str
+    date: date
+    event: str | None = None
+    accommodation: str | None = None
+    gs: str | None = None
+    updated_by: str
+    updated_by_name: str
+    updated_at: datetime
+
+
 class Status(str, Enum):
     """What a person said about one date, blank being no entry at all."""
 
