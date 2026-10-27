@@ -4,11 +4,13 @@ These tests verify that the API starts and responds correctly.
 Extensive unit testing can be added later after proving the concept works.
 """
 
+import re
 from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
 
+from app.main import app
 from app.models.notifications import NotificationStatus
 from app.models.stars import Auth
 from app.services.notification_service import should_send_notification
@@ -20,6 +22,22 @@ async def test_root_endpoint(test_client):
     response = test_client.get("/")
     # Protected: expect 401 (no key) or 503 if Firestore unavailable
     assert response.status_code in [401, 503]
+
+
+def test_every_roster_route_needs_a_key(test_client):
+    """Every roster route refuses a call with no key, new routes included."""
+    routes = [
+        (method, path)
+        for path, operations in app.openapi()["paths"].items()
+        if path.startswith("/roster")
+        for method in operations
+    ]
+    assert len(routes) > 20
+    for method, path in routes:
+        url = re.sub(r"\{[^}]+\}", "2026-11-07", path)
+        response = test_client.request(method, url)
+        # Sign-in routes refuse too, so check it was the key that was missing.
+        assert response.json() == {"detail": "API key required"}, (method, path)
 
 
 @pytest.mark.asyncio

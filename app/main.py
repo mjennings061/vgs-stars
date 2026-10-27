@@ -112,6 +112,7 @@ app.include_router(health.router)
 app.include_router(auths.router)
 app.include_router(unsubscribe.router)
 app.include_router(roster.router)
+app.include_router(roster.tasks_router)
 app.include_router(roster_courses.router)
 
 

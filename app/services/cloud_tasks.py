@@ -15,18 +15,22 @@ from app.config import (
     CLOUD_TASKS_QUEUE_PATH,
     CLOUD_TASKS_SIGNIN_QUEUE_PATH,
     CLOUD_TASKS_TARGET_URL,
+    ROSTER_JOBS_API_KEY,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def _enqueue(queue: str, url: str, body: dict, delay_seconds: int = 0) -> str:
+def _enqueue(
+    queue: str, url: str, body: dict, api_key: str, delay_seconds: int = 0
+) -> str:
     """Queue a Cloud Task that POSTs a JSON body back to this service.
 
     Args:
         queue: Full resource path of the queue.
         url: Target URL the task calls.
         body: JSON body to send.
+        api_key: Key sent with the task, allowed to call its route.
         delay_seconds: Delay from now before dispatching the task.
 
     Returns:
@@ -36,7 +40,7 @@ def _enqueue(queue: str, url: str, body: dict, delay_seconds: int = 0) -> str:
 
     headers = {
         "Content-Type": "application/json",
-        API_KEY_HEADER_NAME: CLOUD_TASKS_API_KEY,
+        API_KEY_HEADER_NAME: api_key,
     }
 
     task: Dict[str, Any] = {
@@ -75,6 +79,7 @@ def enqueue_send_notification(batch_id: str, delay_seconds: int) -> str:
         CLOUD_TASKS_QUEUE_PATH,
         CLOUD_TASKS_TARGET_URL,
         {"batch_id": batch_id},
+        CLOUD_TASKS_API_KEY,
         delay_seconds,
     )
     logger.info("Queued task %s for batch %s", name, batch_id)
@@ -94,6 +99,6 @@ def enqueue_signin_code(code: str, key: str) -> str:
     # Cloud Tasks calls this same service, so its target URL gives us our own base.
     url = urljoin(CLOUD_TASKS_TARGET_URL, "/roster/tasks/send-code")
     body = {"code": code, "key": key}
-    task_name = _enqueue(CLOUD_TASKS_SIGNIN_QUEUE_PATH, url, body)
+    task_name = _enqueue(CLOUD_TASKS_SIGNIN_QUEUE_PATH, url, body, ROSTER_JOBS_API_KEY)
     logger.info("Queued sign-in code task %s", task_name)
     return task_name

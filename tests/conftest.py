@@ -28,6 +28,7 @@ os.environ.setdefault(
     "CLOUD_TASKS_TARGET_URL", "https://test.example.com/api/send_notification"
 )
 os.environ.setdefault("CLOUD_TASKS_API_KEY", "test_cloud_tasks_key")
+os.environ.setdefault("ROSTER_JOBS_API_KEY", "test-roster-jobs-key")
 os.environ.setdefault("CLOUD_TASKS_DISPATCH_DELAY_SECONDS", "20")
 os.environ.setdefault(
     "CLOUD_TASKS_SIGNIN_QUEUE_PATH", "projects/test/locations/test/queues/signin"
@@ -48,6 +49,7 @@ from app.config import (  # noqa: E402
     DATABASE_USERS_COLLECTION,
     ROSTER_PEOPLE_COLLECTION,
     ROSTER_SESSIONS_COLLECTION,
+    SCOPE_ROSTER_JOBS,
     SCOPE_ROSTER_READ,
     STARS_ORG_UNIT_ID,
 )
@@ -57,6 +59,7 @@ from app.services import api_keys, database  # noqa: E402
 
 READ_KEY = "test-roster-read-key"
 HEADERS = {"X-API-Key": READ_KEY}
+JOBS_KEY = "test-roster-jobs-key"
 ADMIN_ID = "p-1043"
 ADMIN_NAME = "J Doe"
 ADMIN_EMAIL = "jdoe@example.com"
@@ -114,7 +117,7 @@ def _person(person_id: str, name: str, role: Role, email: str | None) -> dict:
 
 @pytest.fixture
 def seed():
-    """Reset the emulator and seed a read key, an admin and a member."""
+    """Reset the emulator and add the two keys, an admin and a member."""
     _wipe()
     store = firestore.Client()
     store.collection(DATABASE_USERS_COLLECTION).document("read-key").set(
@@ -122,6 +125,13 @@ def seed():
             "name": "dashboard",
             "api_key": api_keys.hash_api_key(READ_KEY),
             "scopes": [SCOPE_ROSTER_READ],
+        }
+    )
+    store.collection(DATABASE_USERS_COLLECTION).document("jobs-key").set(
+        {
+            "name": "cloud-tasks-roster",
+            "api_key": api_keys.hash_api_key(JOBS_KEY),
+            "scopes": [SCOPE_ROSTER_JOBS],
         }
     )
     people = store.collection(ROSTER_PEOPLE_COLLECTION)
@@ -143,7 +153,7 @@ def queued(mocker):
     """
     tasks = []
 
-    def record(_queue, url, body, _delay_seconds=0):
+    def record(_queue, url, body, _api_key, _delay_seconds=0):
         tasks.append((url, body))
         return f"task-{len(tasks)}"
 
@@ -174,7 +184,7 @@ def _bearer(store, person_id: str, name: str, role: Role) -> dict:
         role: What they are allowed to do.
 
     Returns:
-        The Authorization header carrying the new token.
+        The read key and the Authorization header, as the dashboard sends.
     """
     token = secrets.token_urlsafe(32)
     store.collection(ROSTER_SESSIONS_COLLECTION).document(
@@ -188,7 +198,7 @@ def _bearer(store, person_id: str, name: str, role: Role) -> dict:
             "expiresAt": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         }
     )
-    return {"Authorization": f"Bearer {token}"}
+    return {**HEADERS, "Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture

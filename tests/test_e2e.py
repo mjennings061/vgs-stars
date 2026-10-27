@@ -189,6 +189,7 @@ def test_sign_in_sends_a_code():
     wrong = requests.post(
         _url("/roster/auth/verify-code"),
         json={"nonce": nonce, "code": "000000", "rememberDevice": False},
+        headers=HEADERS,
         timeout=TIMEOUT,
     )
     assert wrong.status_code == 401, wrong.text
@@ -211,7 +212,7 @@ def test_create_month(admin_auth):
     response = requests.post(
         _url("/roster/months"),
         json={"month": MONTH},
-        headers=admin_auth,
+        headers={**HEADERS, **admin_auth},
         timeout=TIMEOUT,
     )
     assert response.status_code == 200, response.text
@@ -232,7 +233,7 @@ def test_patch_dates(admin_auth):
     response = requests.patch(
         _url(f"/roster/months/{MONTH}/dates"),
         json={"add": [WEEKDAY], "remove": [WEEKEND]},
-        headers=admin_auth,
+        headers={**HEADERS, **admin_auth},
         timeout=TIMEOUT,
     )
     assert response.status_code == 200, response.text
@@ -249,7 +250,7 @@ def test_patch_freeze(admin_auth):
     response = requests.patch(
         _url(f"/roster/months/{MONTH}/freeze"),
         json={"freezeAt": "2098-12-01"},
-        headers=admin_auth,
+        headers={**HEADERS, **admin_auth},
         timeout=TIMEOUT,
     )
     assert response.status_code == 200, response.text

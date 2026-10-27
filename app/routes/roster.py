@@ -12,7 +12,11 @@ from google.api_core.exceptions import Conflict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-from app.config import ROSTER_COMMENT_MAX_LENGTH, SCOPE_ROSTER_READ, SCOPE_STARS
+from app.config import (
+    ROSTER_COMMENT_MAX_LENGTH,
+    SCOPE_ROSTER_JOBS,
+    SCOPE_ROSTER_READ,
+)
 from app.models.roster import (
     ChangeState,
     Part,
@@ -36,7 +40,18 @@ logger = logging.getLogger(__name__)
 # A course runs a week or two, so two months of dates is already generous.
 MAX_GRID_DATES = 62
 
-router = APIRouter(prefix="/roster", tags=["roster"])
+router = APIRouter(
+    prefix="/roster",
+    tags=["roster"],
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
+
+# Only the background jobs key can call these routes, and nothing else.
+tasks_router = APIRouter(
+    prefix="/roster/tasks",
+    tags=["roster"],
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_JOBS))],
+)
 
 
 def _invalid_code() -> HTTPException:
@@ -105,7 +120,6 @@ class VerifyCodeResponse(SessionResponse):
     "/auth/request-code",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=RequestCodeResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def request_code(request: RequestCodeRequest) -> RequestCodeResponse:
     """Email a sign-in code to a person.
@@ -130,11 +144,7 @@ async def request_code(request: RequestCodeRequest) -> RequestCodeResponse:
     return RequestCodeResponse(nonce=nonce)
 
 
-@router.post(
-    "/tasks/send-code",
-    status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_scope(SCOPE_STARS))],
-)
+@tasks_router.post("/send-code", status_code=status.HTTP_204_NO_CONTENT)
 async def send_code(request: SendCodeRequest) -> None:
     """Email a queued sign-in code; called by Cloud Tasks.
 
@@ -334,7 +344,6 @@ class PatchFreezeRequest(BaseModel):
 @router.get(
     "/people",
     response_model=PeopleResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_people() -> PeopleResponse:
     """List the squadron for the grid's rows.
@@ -351,7 +360,6 @@ async def read_people() -> PeopleResponse:
 @router.get(
     "/months",
     response_model=MonthsResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_months() -> MonthsResponse:
     """List the months the arrows can move between.
@@ -394,7 +402,6 @@ async def create_month(
 @router.get(
     "/months/{month}",
     response_model=MonthResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_month(month: str) -> MonthResponse:
     """Read one month's dates and freeze state.
@@ -477,10 +484,7 @@ async def patch_month_freeze(
     return MonthResponse.of(record)
 
 
-@router.delete(
-    "/months/{month}",
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
-)
+@router.delete("/months/{month}")
 async def remove_month(month: str, session: dict = Depends(require_admin)) -> dict:
     """Hide a month; its answers and notes stay, and opening it again restores it.
 
@@ -715,7 +719,6 @@ async def grid_rows(
 @router.get(
     "/months/{month}/grid",
     response_model=GridResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_grid(month: str) -> GridResponse:
     """Draw the whole month for the whole squadron.
@@ -750,7 +753,6 @@ async def read_grid(month: str) -> GridResponse:
     "/people/{person_id}/days/{day}",
     response_model=SetEntryResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def set_availability(
     person_id: str,
@@ -839,10 +841,7 @@ async def set_availability(
     return SetEntryResponse(applied=change_id is None, change_id=change_id)
 
 
-@router.patch(
-    "/days/{day}",
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
-)
+@router.patch("/days/{day}")
 async def patch_day(
     day: date, request: PatchDayRequest, session: dict = Depends(require_admin)
 ) -> dict:
@@ -879,7 +878,6 @@ async def patch_day(
 @router.get(
     "/changes",
     response_model=ChangesResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_changes(state: ChangeState | None = None) -> ChangesResponse:
     """List changes across every grid, for the changes panel.

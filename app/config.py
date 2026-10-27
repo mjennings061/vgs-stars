@@ -37,6 +37,8 @@ CLOUD_TASKS_TARGET_URL = os.environ["CLOUD_TASKS_TARGET_URL"]
 CLOUD_TASKS_API_KEY = os.environ["CLOUD_TASKS_API_KEY"]
 # Its own queue, so codes never wait behind expiry emails and are retried.
 CLOUD_TASKS_SIGNIN_QUEUE_PATH = os.environ["CLOUD_TASKS_SIGNIN_QUEUE_PATH"]
+# Sign-in emails get their own key, so a STARS key cannot send them.
+ROSTER_JOBS_API_KEY = os.environ["ROSTER_JOBS_API_KEY"]
 CLOUD_TASKS_DISPATCH_DELAY_SECONDS = int(
     os.environ["CLOUD_TASKS_DISPATCH_DELAY_SECONDS"]
 )
@@ -68,6 +70,7 @@ ROSTER_TIMEZONE = "Europe/London"
 # Scopes carried by API key records.
 SCOPE_STARS = "stars"
 SCOPE_ROSTER_READ = "roster:read"
+SCOPE_ROSTER_JOBS = "roster:jobs"
 
 
 def configure_logging() -> None:
