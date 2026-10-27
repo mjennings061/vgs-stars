@@ -183,6 +183,27 @@ notificationChannels:
 '
 ```
 
+## Backups
+
+Daily, kept 4 weeks in europe-west2. Set up once:
+
+```bash
+gcloud firestore backups schedules create --project=vgs-stars-dev --database='(default)' --recurrence=daily --retention=4w
+gcloud firestore databases update --project=vgs-stars-dev --database='(default)' --delete-protection
+```
+
+To restore, take an ID from:
+
+```bash
+gcloud firestore backups list --project=vgs-stars-dev --location=europe-west2
+```
+
+Then restore with:
+
+```bash
+gcloud firestore databases restore --source-backup=projects/vgs-stars-dev/locations/europe-west2/backups/ID --destination-database=restore-test
+```
+
 ## Managing Users
 
 All endpoints except `/health` require an API key stored in Firestore. Keys live in the `users` collection with fields `name` and `api_key` (hashed). To create one:
