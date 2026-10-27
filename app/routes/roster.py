@@ -366,14 +366,14 @@ async def read_months() -> MonthsResponse:
 async def create_month(
     request: CreateMonthRequest, session: dict = Depends(require_admin)
 ) -> MonthResponse:
-    """Open a month, filled in with every Saturday and Sunday.
+    """Open a month with every Saturday and Sunday, or restore a removed one.
 
     Args:
         request: Payload naming the month.
         session: The admin doing it.
 
     Returns:
-        The new month.
+        The new month, or the removed one with its dates as they were.
 
     Raises:
         HTTPException: 400 for a malformed month, 409 if it already exists.
@@ -475,6 +475,31 @@ async def patch_month_freeze(
 
     logger.info("Month %s freeze moved by %s", month, session["personId"])
     return MonthResponse.of(record)
+
+
+@router.delete(
+    "/months/{month}",
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
+async def remove_month(month: str, session: dict = Depends(require_admin)) -> dict:
+    """Hide a month; its answers and notes stay, and opening it again restores it.
+
+    Args:
+        month: Year and month, as 2026-11.
+        session: The admin doing it.
+
+    Returns:
+        An empty acknowledgement.
+
+    Raises:
+        HTTPException: 400 for a malformed month, 404 if there is no such month.
+    """
+    _month_start(month)
+    if not await roster_months.remove_month(month, session["personId"]):
+        raise _unknown_month()
+
+    logger.info("Month %s removed by %s", month, session["personId"])
+    return {}
 
 
 class EntryResponse(BaseModel):

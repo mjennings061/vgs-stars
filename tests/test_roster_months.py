@@ -19,7 +19,14 @@ from app.config import (
 )
 from app.models.roster import Role
 from app.services import api_keys
-from tests.conftest import ADMIN_EMAIL, ADMIN_ID, ADMIN_NAME, HEADERS, MEMBER_NAME
+from tests.conftest import (
+    ADMIN_EMAIL,
+    ADMIN_ID,
+    ADMIN_NAME,
+    HEADERS,
+    MEMBER_ID,
+    MEMBER_NAME,
+)
 
 pytestmark = pytest.mark.skipif(
     "FIRESTORE_EMULATOR_HOST" not in os.environ,
@@ -350,3 +357,70 @@ def test_a_month_end_sunday_is_edited_on_its_saturdays_month(client, admin_auth)
         "/roster/months/2026-11/dates", json={"add": ["2026-11-01"]}, headers=admin_auth
     )
     assert refused.status_code == 400
+
+
+def test_a_removed_month_hides_and_comes_back_as_it_was(
+    client, admin_auth, member_auth
+):
+    """Rule 10: removing hides the month; opening it again restores its answers."""
+    keyed = {**HEADERS, **admin_auth}
+    base = f"/roster/months/{MONTH}"
+    day = WEEKENDS[0]
+    answer = f"/roster/people/{MEMBER_ID}/days/{day}"
+    _create(client, admin_auth)
+    client.patch(f"{base}/dates", json={"remove": [WEEKENDS[-1]]}, headers=admin_auth)
+    _freeze(client, admin_auth, "2026-12-20")
+    body = {"status": "Y", "part": None, "comment": None}
+    assert client.put(answer, json=body, headers=keyed).status_code == 200
+    note = client.patch(f"/roster/days/{day}", json={"event": "QVS"}, headers=keyed)
+    assert note.status_code == 200
+    course = {"title": "Camp", "dates": [WEEKENDS[1]]}
+    assert client.post("/roster/courses", json=course, headers=keyed).status_code == 200
+    on_course = f"/roster/people/{MEMBER_ID}/days/{WEEKENDS[1]}"
+
+    member = client.delete(base, headers={**HEADERS, **member_auth})
+    assert member.status_code == 403
+    assert client.delete(base, headers=keyed).status_code == 200
+    assert client.get(base, headers=HEADERS).status_code == 404
+    assert client.get(f"{base}/grid", headers=HEADERS).status_code == 404
+    assert MONTH not in client.get("/roster/months", headers=HEADERS).json()["months"]
+    assert client.put(answer, json=body, headers=keyed).status_code == 400
+    assert client.put(on_course, json=body, headers=keyed).status_code == 200
+    note = client.patch(f"/roster/days/{day}", json={"gs": "MW"}, headers=keyed)
+    assert note.status_code == 400
+    assert _freeze(client, admin_auth, FREEZE_AT).status_code == 404
+    assert client.delete(base, headers=keyed).status_code == 404
+
+    reopened = _create(client, admin_auth)
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["dates"] == WEEKENDS[:-1]
+    assert reopened.json()["freezeAt"] == "2026-12-20"
+    grid = client.get(f"{base}/grid", headers=HEADERS).json()
+    row = next(row for row in grid["rows"] if row["personId"] == MEMBER_ID)
+    assert row["entries"][day]["status"] == "Y"
+    assert grid["days"][day]["event"] == "QVS"
+    assert _create(client, admin_auth).status_code == 409
+
+
+def test_a_removed_months_waiting_change_can_still_be_approved(
+    client, admin_auth, member_auth
+):
+    """A member's change on a removed month stays for an admin to decide."""
+    keyed = {**HEADERS, **admin_auth}
+    answer = f"/roster/people/{MEMBER_ID}/days/{WEEKENDS[0]}"
+    _create(client, admin_auth)
+    _freeze(
+        client, admin_auth, datetime.now(ZoneInfo(ROSTER_TIMEZONE)).date().isoformat()
+    )
+    yes = {"status": "Y", "part": None, "comment": None}
+    assert client.put(answer, json=yes, headers=keyed).status_code == 200
+    no = {"status": "N", "part": None, "comment": "Work"}
+    asked = client.put(answer, json=no, headers={**HEADERS, **member_auth}).json()
+    assert asked["applied"] is False
+
+    assert client.delete(f"/roster/months/{MONTH}", headers=keyed).status_code == 200
+    params = {"state": "pending"}
+    changes = client.get("/roster/changes", headers=HEADERS, params=params).json()
+    assert [change["changeId"] for change in changes["changes"]] == [asked["changeId"]]
+    url = f"/roster/changes/{asked['changeId']}/approve"
+    assert client.post(url, headers=admin_auth).status_code == 200

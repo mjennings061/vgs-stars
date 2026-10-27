@@ -2,10 +2,10 @@
 
 import calendar
 import logging
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import Conflict
 from google.cloud import firestore
 from google.cloud.firestore_v1 import FieldFilter
 
@@ -104,14 +104,28 @@ def _weekends(start: date) -> list[date]:
     return [d for d in dates if d.weekday() >= 5 and owner_month(d) == month]
 
 
+def _live(data: dict | None) -> RosterMonth | None:
+    """Read a stored month, treating a removed one as gone.
+
+    Args:
+        data: The document, or None if there is none.
+
+    Returns:
+        The month, or None if it is missing or removed.
+    """
+    if not data or data.get("removedAt"):
+        return None
+    return RosterMonth.model_validate(data)
+
+
 async def create_month(month: str) -> RosterMonth:
-    """Open a month with every weekend in it and a freeze date two weeks before.
+    """Open a month with every weekend in it, or bring back a removed one as it was.
 
     Args:
         month: Year and month, as 2026-11.
 
     Returns:
-        The new month.
+        The new or restored month.
 
     Raises:
         google.api_core.exceptions.Conflict: If the month already exists.
@@ -124,12 +138,21 @@ async def create_month(month: str) -> RosterMonth:
         freeze_at=start - timedelta(days=ROSTER_FREEZE_DAYS),
     )
 
-    col = database.get_collection(ROSTER_MONTHS_COLLECTION)
-    # create() fails if the document exists, so two admins cannot both win.
-    await col.document(_key(month)).create(
-        record.model_dump(by_alias=True, mode="json")
+    ref = database.get_collection(ROSTER_MONTHS_COLLECTION).document(_key(month))
+    try:
+        # create() fails if the document exists, so two admins cannot both win.
+        await ref.create(record.model_dump(by_alias=True, mode="json"))
+        return record
+    except Conflict:
+        data = (await ref.get()).to_dict() or {}
+        if not data.get("removedAt"):
+            raise
+
+    logger.info("Month %s restored", month)
+    await ref.update(
+        {"removedBy": firestore.DELETE_FIELD, "removedAt": firestore.DELETE_FIELD}
     )
-    return record
+    return RosterMonth.model_validate(data)
 
 
 async def get_month(month: str) -> RosterMonth | None:
@@ -139,17 +162,14 @@ async def get_month(month: str) -> RosterMonth | None:
         month: Year and month, as 2026-11.
 
     Returns:
-        The month, or None if it has not been created.
+        The month, or None if it has not been created or was removed.
     """
     col = database.get_collection(ROSTER_MONTHS_COLLECTION)
-    snapshot = await col.document(_key(month)).get()
-    if not snapshot.exists:
-        return None
-    return RosterMonth.model_validate(snapshot.to_dict())
+    return _live((await col.document(_key(month)).get()).to_dict())
 
 
 async def list_months() -> list[str]:
-    """List the squadron's months, newest first.
+    """List the squadron's months that have not been removed, newest first.
 
     Returns:
         Months as 2026-11, for the back and forward arrows.
@@ -157,8 +177,10 @@ async def list_months() -> list[str]:
     col = database.get_collection(ROSTER_MONTHS_COLLECTION)
     # ponytail: equality filter only, so the automatic single-field index serves it.
     query = col.where(filter=FieldFilter("squadronId", "==", STARS_ORG_UNIT_ID))
-    months = [(doc.to_dict() or {}).get("month") async for doc in query.stream()]
-    return sorted((month for month in months if month), reverse=True)
+    months = [
+        record.month async for doc in query.stream() if (record := _live(doc.to_dict()))
+    ]
+    return sorted(months, reverse=True)
 
 
 async def get_months(months: set[str]) -> list[RosterMonth]:
@@ -168,7 +190,7 @@ async def get_months(months: set[str]) -> list[RosterMonth]:
         months: Months as 2026-11.
 
     Returns:
-        Those that exist, in no particular order.
+        Those that exist and were not removed, in no particular order.
     """
     col = database.get_collection(ROSTER_MONTHS_COLLECTION)
     refs = [col.document(_key(month)) for month in months]
@@ -176,9 +198,9 @@ async def get_months(months: set[str]) -> list[RosterMonth]:
         return []
 
     return [
-        RosterMonth.model_validate(snapshot.to_dict())
+        record
         async for snapshot in database.get_client().get_all(refs)
-        if snapshot.exists
+        if (record := _live(snapshot.to_dict()))
     ]
 
 
@@ -245,9 +267,27 @@ async def set_freeze(month: str, freeze_at: date) -> RosterMonth | None:
     Returns:
         The updated month, or None if there is no such month.
     """
-    col = database.get_collection(ROSTER_MONTHS_COLLECTION)
-    try:
-        await col.document(_key(month)).update({"freezeAt": freeze_at.isoformat()})
-    except NotFound:
+    if await get_month(month) is None:
         return None
+    col = database.get_collection(ROSTER_MONTHS_COLLECTION)
+    await col.document(_key(month)).update({"freezeAt": freeze_at.isoformat()})
     return await get_month(month)
+
+
+async def remove_month(month: str, removed_by: str) -> bool:
+    """Hide a month, keeping it and every answer and note on its dates.
+
+    Args:
+        month: Year and month, as 2026-11.
+        removed_by: The admin removing it.
+
+    Returns:
+        False if there was no such month to remove.
+    """
+    if await get_month(month) is None:
+        return False
+    col = database.get_collection(ROSTER_MONTHS_COLLECTION)
+    await col.document(_key(month)).update(
+        {"removedBy": removed_by, "removedAt": datetime.now(UTC).isoformat()}
+    )
+    return True
