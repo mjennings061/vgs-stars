@@ -206,7 +206,7 @@ def test_setting_a_date_needs_the_dashboard_key(client, member_auth):
     response = client.put(
         f"/roster/people/{MEMBER_ID}/days/{SATURDAY}",
         json={"status": "Y"},
-        headers=member_auth,
+        headers={"Authorization": member_auth["Authorization"]},
     )
     assert response.status_code == 401
 

@@ -217,5 +217,6 @@ def test_members_and_keyless_callers_cannot_change_courses(
     ]
     for method, path, body in writes:
         assert _send(client, method, path, member_auth, body).status_code == 403
-        response = client.request(method, path, json=body, headers=admin_auth)
+        token_only = {"Authorization": admin_auth["Authorization"]}
+        response = client.request(method, path, json=body, headers=token_only)
         assert response.status_code == 401

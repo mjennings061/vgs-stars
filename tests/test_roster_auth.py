@@ -16,10 +16,10 @@ from app.config import (
     ROSTER_SESSION_HOURS,
     SCOPE_STARS,
 )
-from app.services import api_keys
+from app.services import api_keys, cloud_tasks
 from tests.conftest import ADMIN_EMAIL
 from tests.conftest import ADMIN_ID as PERSON_ID
-from tests.conftest import HEADERS
+from tests.conftest import HEADERS, JOBS_KEY
 
 pytestmark = [
     pytest.mark.skipif(
@@ -70,6 +70,7 @@ def test_sign_in_flow(client, queued):
 
     verified = client.post(
         "/roster/auth/verify-code",
+        headers=HEADERS,
         json={"nonce": nonce, "code": _code_from(queued)},
     )
     assert verified.status_code == 200
@@ -79,7 +80,7 @@ def test_sign_in_flow(client, queued):
     assert body["role"] == "admin"
     assert body["token"]
 
-    auth = {"Authorization": f"Bearer {body['token']}"}
+    auth = {**HEADERS, "Authorization": f"Bearer {body['token']}"}
     me = client.get("/roster/auth/me", headers=auth)
     assert me.status_code == 200
     assert me.json() == {
@@ -99,10 +100,14 @@ def test_wrong_code_and_wrong_nonce_are_indistinguishable(client, queued):
     real_code = _code_from(queued)
 
     wrong_code = client.post(
-        "/roster/auth/verify-code", json={"nonce": nonce, "code": "000000"}
+        "/roster/auth/verify-code",
+        headers=HEADERS,
+        json={"nonce": nonce, "code": "000000"},
     )
     wrong_nonce = client.post(
-        "/roster/auth/verify-code", json={"nonce": "deadbeef", "code": real_code}
+        "/roster/auth/verify-code",
+        headers=HEADERS,
+        json={"nonce": "deadbeef", "code": real_code},
     )
 
     assert wrong_code.status_code == wrong_nonce.status_code == 401
@@ -120,7 +125,7 @@ def test_expired_code_is_refused(client, queued, seed):
         doc.reference.update({"expiresAt": stale})
 
     response = client.post(
-        "/roster/auth/verify-code", json={"nonce": nonce, "code": code}
+        "/roster/auth/verify-code", headers=HEADERS, json={"nonce": nonce, "code": code}
     )
     assert response.status_code == 401
 
@@ -131,8 +136,14 @@ def test_code_is_single_use(client, queued):
     code = _code_from(queued)
     body = {"nonce": nonce, "code": code}
 
-    assert client.post("/roster/auth/verify-code", json=body).status_code == 200
-    assert client.post("/roster/auth/verify-code", json=body).status_code == 401
+    assert (
+        client.post("/roster/auth/verify-code", headers=HEADERS, json=body).status_code
+        == 200
+    )
+    assert (
+        client.post("/roster/auth/verify-code", headers=HEADERS, json=body).status_code
+        == 401
+    )
 
 
 def test_code_locks_after_five_attempts(client, queued):
@@ -142,12 +153,14 @@ def test_code_locks_after_five_attempts(client, queued):
 
     for _ in range(5):
         wrong = client.post(
-            "/roster/auth/verify-code", json={"nonce": nonce, "code": "000000"}
+            "/roster/auth/verify-code",
+            headers=HEADERS,
+            json={"nonce": nonce, "code": "000000"},
         )
         assert wrong.status_code == 401
 
     response = client.post(
-        "/roster/auth/verify-code", json={"nonce": nonce, "code": code}
+        "/roster/auth/verify-code", headers=HEADERS, json={"nonce": nonce, "code": code}
     )
     assert response.status_code == 401
 
@@ -216,6 +229,7 @@ def test_remember_device_sets_the_session_lifetime(
     nonce = _request_code(client).json()["nonce"]
     body = client.post(
         "/roster/auth/verify-code",
+        headers=HEADERS,
         json={
             "nonce": nonce,
             "code": _code_from(queued),
@@ -262,27 +276,29 @@ def test_key_with_no_scopes_is_refused(client, seed):
 def test_send_code_task_emails_only_a_real_code_to_its_owner(
     client, seed, sent, queued
 ):
-    """The queued task reaches its owner; a forged one or the roster key does not."""
+    """Only the real code reaches its owner, and only with the jobs key."""
     seed.collection(DATABASE_USERS_COLLECTION).document("stars-key").set(
         {
-            "name": "cloud-tasks",
+            "name": "stars",
             "api_key": api_keys.hash_api_key("test-stars-key"),
             "scopes": [SCOPE_STARS],
         }
     )
     nonce = _request_code(client).json()["nonce"]
     url, body = queued[-1]
+    assert cloud_tasks._enqueue.call_args.args[3] == JOBS_KEY
     wrong_code = f"{(int(body['code']) + 1) % 1_000_000:06d}"
     record = seed.collection(ROSTER_CODES_COLLECTION).document(body["key"])
 
     def replay(task_body: dict, headers: dict | None = None) -> int:
-        """Post a task body as Cloud Tasks would, with the STARS key by default."""
-        headers = headers or {"X-API-Key": "test-stars-key"}
+        """Send the email task as the queue would, with the jobs key by default."""
+        headers = headers or {"X-API-Key": JOBS_KEY}
         return client.post(
             urlparse(url).path, json=task_body, headers=headers
         ).status_code
 
     assert replay(body, HEADERS) == 403
+    assert replay(body, {"X-API-Key": "test-stars-key"}) == 403
     assert replay({**body, "email": "someone@example.com"}) == 422
     assert replay({**body, "key": "0" * 64}) == 204
     # A wrong code is a guess, so it counts towards the five-guess lockout.
@@ -302,7 +318,9 @@ def test_send_code_task_emails_only_a_real_code_to_its_owner(
 
     # Once the code is spent, a late retry must not email it again.
     verified = client.post(
-        "/roster/auth/verify-code", json={"nonce": nonce, "code": body["code"]}
+        "/roster/auth/verify-code",
+        headers=HEADERS,
+        json={"nonce": nonce, "code": body["code"]},
     )
     assert verified.status_code == 200
     calls = sent.call_count

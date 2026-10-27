@@ -22,7 +22,11 @@ from app.services import roster_courses, roster_months
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/roster", tags=["roster"])
+router = APIRouter(
+    prefix="/roster",
+    tags=["roster"],
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
 
 
 def _unknown_course() -> HTTPException:
@@ -95,7 +99,6 @@ class CreateCourseRequest(BaseModel):
 @router.get(
     "/courses",
     response_model=CoursesResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_courses() -> CoursesResponse:
     """List the courses the arrows can move between.
@@ -119,7 +122,6 @@ async def read_courses() -> CoursesResponse:
 @router.post(
     "/courses",
     response_model=CourseResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def create_course(
     request: CreateCourseRequest, session: dict = Depends(require_admin)
@@ -150,7 +152,6 @@ async def create_course(
 @router.get(
     "/courses/{course_id}",
     response_model=CourseResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_course(course_id: str) -> CourseResponse:
     """Read one course's dates and freeze state.
@@ -173,7 +174,6 @@ async def read_course(course_id: str) -> CourseResponse:
 @router.patch(
     "/courses/{course_id}/dates",
     response_model=CourseResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def patch_course_dates(
     course_id: str, request: PatchDatesRequest, session: dict = Depends(require_admin)
@@ -211,7 +211,6 @@ async def patch_course_dates(
 @router.patch(
     "/courses/{course_id}/freeze",
     response_model=CourseResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def patch_course_freeze(
     course_id: str, request: PatchFreezeRequest, session: dict = Depends(require_admin)
@@ -242,10 +241,7 @@ async def patch_course_freeze(
     return CourseResponse.of(record)
 
 
-@router.delete(
-    "/courses/{course_id}",
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
-)
+@router.delete("/courses/{course_id}")
 async def remove_course(course_id: str, session: dict = Depends(require_admin)) -> dict:
     """Hide a course; its answers stay, and show again on any grid with its dates.
 
@@ -269,7 +265,6 @@ async def remove_course(course_id: str, session: dict = Depends(require_admin)) 
 @router.get(
     "/courses/{course_id}/grid",
     response_model=GridResponse,
-    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
 )
 async def read_course_grid(course_id: str) -> GridResponse:
     """Draw a whole course for the whole squadron, across any month end.
