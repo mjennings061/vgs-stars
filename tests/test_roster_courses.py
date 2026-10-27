@@ -147,12 +147,17 @@ def test_a_locked_course_locks_the_date_on_an_open_month(
     assert response.json()["applied"] is False
     assert _answer(client, member_auth, SUNDAY, "N").json() == {"applied": True}
 
-    # Saturday is on both grids, so both show one answer and one waiting change.
+    note = {"event": "QVS"}
+    response = _send(client, "PATCH", f"/roster/days/{SATURDAY}", admin_auth, note)
+    assert response.status_code == 200, response.text
+
+    # Saturday is on both grids, so both show one answer, note and waiting change.
     for path in (f"/roster/months/{MONTH}/grid", f"/roster/courses/{course_id}/grid"):
-        rows = _grid(client, path)["rows"]
-        row = next(row for row in rows if row["personId"] == MEMBER_ID)
+        grid = _grid(client, path)
+        row = next(row for row in grid["rows"] if row["personId"] == MEMBER_ID)
         assert row["entries"][SATURDAY]["status"] == "Y"
         assert row["pending"][SATURDAY]["toStatus"] == "N"
+        assert grid["days"][SATURDAY]["event"] == "QVS"
 
 
 def test_dates_freeze_and_remove_answer_as_the_spec_says(
