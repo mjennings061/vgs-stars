@@ -27,6 +27,7 @@ from app.services import (
     roster_auth,
     roster_availability,
     roster_courses,
+    roster_days,
     roster_months,
 )
 
@@ -517,6 +518,20 @@ class GridRow(BaseModel):
     pending: dict[str, PendingResponse] = Field(default_factory=dict)
 
 
+class DayResponse(BaseModel):
+    """One date's note boxes, and who wrote on them last."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True, from_attributes=True
+    )
+
+    event: str | None = None
+    accommodation: str | None = None
+    gs: str | None = None
+    updated_by_name: str
+    updated_at: datetime
+
+
 class GridResponse(BaseModel):
     """Everything a month's or a course's grid needs, in one call."""
 
@@ -530,6 +545,7 @@ class GridResponse(BaseModel):
     frozen: bool
     # A date on a month and a course freezes when the first of them does.
     frozen_dates: list[date]
+    days: dict[str, DayResponse]
     rows: list[GridRow]
 
 
@@ -604,17 +620,37 @@ class RejectRequest(BaseModel):
     comment: str = Field(..., min_length=1, max_length=ROSTER_COMMENT_MAX_LENGTH)
 
 
+class PatchDayRequest(BaseModel):
+    """Body setting some of a date's note boxes; boxes left out are untouched."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    event: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
+    accommodation: str | None = Field(
+        default=None, max_length=ROSTER_COMMENT_MAX_LENGTH
+    )
+    gs: str | None = Field(default=None, max_length=ROSTER_COMMENT_MAX_LENGTH)
+
+    @model_validator(mode="after")
+    def _check_boxes(self) -> "PatchDayRequest":
+        """Refuse a body with no box, which would only re-stamp who edited last."""
+        if not self.model_fields_set:
+            raise ValueError("Send at least one of event, accommodation or gs")
+        return self
+
+
 async def grid_rows(
     dates: list[date], freeze_at: date
-) -> tuple[list[GridRow], list[date]]:
-    """Build every person's row and the locked dates for one grid.
+) -> tuple[list[GridRow], list[date], dict[str, DayResponse]]:
+    """Build every person's row, the locked dates and the notes for one grid.
 
     Args:
         dates: The grid's dates.
         freeze_at: The grid's own freeze date.
 
     Returns:
-        The rows, by name, and the dates that have frozen on any grid.
+        The rows, by name, the dates that have frozen on any grid, and the
+        notes keyed by date.
     """
     people = await roster_auth.list_people()
     answers = await roster_availability.read_dates(
@@ -644,7 +680,11 @@ async def grid_rows(
     frozen = [
         day for day in dates if roster_months.is_frozen(locks.get(day, freeze_at))
     ]
-    return rows, frozen
+    days = {
+        day: DayResponse.model_validate(note)
+        for day, note in (await roster_days.read_days(dates)).items()
+    }
+    return rows, frozen, days
 
 
 @router.get(
@@ -669,13 +709,14 @@ async def read_grid(month: str) -> GridResponse:
     if record is None:
         raise _unknown_month()
 
-    rows, frozen_dates = await grid_rows(record.dates, record.freeze_at)
+    rows, frozen_dates, days = await grid_rows(record.dates, record.freeze_at)
     return GridResponse(
         month=record.month,
         dates=record.dates,
         freeze_at=record.freeze_at,
         frozen=roster_months.is_frozen(record.freeze_at),
         frozen_dates=frozen_dates,
+        days=days,
         rows=rows,
     )
 
@@ -771,6 +812,43 @@ async def set_availability(
         session["personId"],
     )
     return SetEntryResponse(applied=change_id is None, change_id=change_id)
+
+
+@router.patch(
+    "/days/{day}",
+    dependencies=[Depends(require_scope(SCOPE_ROSTER_READ))],
+)
+async def patch_day(
+    day: date, request: PatchDayRequest, session: dict = Depends(require_admin)
+) -> dict:
+    """Set some of the note boxes above one date, on every grid holding it.
+
+    Args:
+        day: The flying date.
+        request: Only the boxes to set; an empty string clears one.
+        session: The admin doing it.
+
+    Returns:
+        An empty acknowledgement.
+
+    Raises:
+        HTTPException: 400 for a date on no month or course.
+    """
+    if not await roster_courses.lock_dates([day]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{day.isoformat()} is not on any month or course",
+        )
+
+    await roster_days.save(
+        day,
+        request.model_dump(include=request.model_fields_set),
+        session["personId"],
+        session["name"],
+    )
+    # The note text stays out of the log, as it can describe cadets.
+    logger.info("Notes for %s set by %s", day.isoformat(), session["personId"])
+    return {}
 
 
 @router.get(

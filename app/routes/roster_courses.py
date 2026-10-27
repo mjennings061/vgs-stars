@@ -287,7 +287,7 @@ async def read_course_grid(course_id: str) -> GridResponse:
     if record is None:
         raise _unknown_course()
 
-    rows, frozen_dates = await grid_rows(record.dates, record.freeze_at)
+    rows, frozen_dates, days = await grid_rows(record.dates, record.freeze_at)
     return GridResponse(
         course_id=record.course_id,
         title=record.title,
@@ -295,5 +295,6 @@ async def read_course_grid(course_id: str) -> GridResponse:
         freeze_at=record.freeze_at,
         frozen=roster_months.is_frozen(record.freeze_at),
         frozen_dates=frozen_dates,
+        days=days,
         rows=rows,
     )
