@@ -60,6 +60,8 @@ ROSTER_CODE_REQUESTS_PER_HOUR = 3
 ROSTER_SESSION_HOURS = 12
 ROSTER_REMEMBER_DEVICE_DAYS = 30
 ROSTER_FREEZE_DAYS = 14
+# Reminders fall on days whose count to the freeze divides by this.
+ROSTER_REMINDER_EVERY_DAYS = 3
 
 # A reason on the grid is a sentence, not an essay, and it is shown to everyone.
 ROSTER_COMMENT_MAX_LENGTH = 200
