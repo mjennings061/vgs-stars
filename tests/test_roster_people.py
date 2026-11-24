@@ -14,6 +14,7 @@ from app.models.roster import Role
 from app.models.stars import Person, User
 from app.services import stars_client
 from scripts.roster_people import seed_people
+from tests.conftest import deactivate
 
 needs_emulator = pytest.mark.skipif(
     "FIRESTORE_EMULATOR_HOST" not in os.environ,
@@ -95,33 +96,78 @@ def test_malformed_response_is_a_stars_error(mocker):
         stars_client.get_people_for_unit(STARS_ORG_UNIT_ID)
 
 
-@needs_emulator
-def test_sync_removes_leavers_and_keeps_roles(seed, mocker):
-    """A rerun drops whoever left, without disturbing the admins who stayed."""
-    stayed = Person(**_record("p-1043", "J Doe"))
-    mocker.patch.object(stars_client, "get_people_for_unit", return_value=[stayed])
+def _stars_lists(mocker, *person_ids: str) -> None:
+    """Have STARS list exactly these people, each with an account and email.
+
+    Args:
+        mocker: The pytest-mock fixture.
+        *person_ids: Who STARS says is on the unit.
+    """
+    mocker.patch.object(
+        stars_client,
+        "get_people_for_unit",
+        return_value=[Person(**_record(pid, pid)) for pid in person_ids],
+    )
     mocker.patch.object(
         stars_client,
         "get_users",
         return_value=[
             User(
-                id="u-p-1043",
-                name="J Doe",
-                email="jdoe@example.com",
+                id=f"u-{pid}",
+                name=pid,
+                email=f"{pid}@example.com",
                 status="active",
                 baseStatus="active",
             )
+            for pid in person_ids
         ],
     )
+
+
+@needs_emulator
+def test_sync_marks_leavers_inactive_and_keeps_roles(seed, mocker):
+    """A rerun keeps whoever left as inactive, without disturbing the admins."""
+    _stars_lists(mocker, "p-1043")
 
     seed_people()
 
     people = seed.collection(ROSTER_PEOPLE_COLLECTION)
     # p-2210 was seeded by the fixture and STARS no longer lists them.
-    assert not people.document(f"{STARS_ORG_UNIT_ID}:p-2210").get().exists
-    kept = people.document(f"{STARS_ORG_UNIT_ID}:p-1043").get()
-    assert kept.exists
-    assert kept.to_dict()["role"] == Role.ADMIN.value
+    leaver = people.document(f"{STARS_ORG_UNIT_ID}:p-2210").get().to_dict()
+    assert leaver["isActive"] is False
+    kept = people.document(f"{STARS_ORG_UNIT_ID}:p-1043").get().to_dict()
+    assert kept["isActive"] is True
+    assert kept["role"] == Role.ADMIN.value
+
+
+@needs_emulator
+def test_a_leaver_loses_their_email_and_admin_role(seed, mocker):
+    """Nothing is kept that could email them or let them back in as an admin."""
+    _stars_lists(mocker, "p-2210")
+
+    seed_people()
+
+    leaver = seed.collection(ROSTER_PEOPLE_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:p-1043"
+    )
+    record = leaver.get().to_dict()
+    assert record["isActive"] is False
+    assert record["role"] == Role.MEMBER.value
+    assert "email" not in record
+
+
+@needs_emulator
+def test_sync_brings_back_someone_who_rejoins(seed, mocker):
+    """Back on the unit in STARS means back on the roster."""
+    deactivate(seed, "p-2210")
+    _stars_lists(mocker, "p-1043", "p-2210")
+
+    seed_people()
+
+    member = seed.collection(ROSTER_PEOPLE_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:p-2210"
+    )
+    assert member.get().to_dict()["isActive"] is True
 
 
 @needs_emulator

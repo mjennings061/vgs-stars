@@ -19,6 +19,7 @@ from app.config import (  # noqa: E402  # pylint: disable=wrong-import-position
     STARS_ORG_UNIT_ID,
 )
 from app.models.roster import (  # noqa: E402  # pylint: disable=wrong-import-position
+    Role,
     RosterPerson,
 )
 from app.services import (  # noqa: E402  # pylint: disable=wrong-import-position
@@ -49,19 +50,30 @@ def seed_people() -> None:
             rank=person.rank,
             instruct_cat=person.instruct_cat,
         )
-        # role is excluded and merge is on, so a rerun cannot demote the admins.
+        # role is excluded and merge is on, so a rerun keeps admins still in STARS.
         document = record.model_dump(by_alias=True, exclude={"role"})
         col.document(roster_auth.person_key(person.id)).set(document, merge=True)
 
-    # A leaver left behind keeps their email and their ability to sign in.
+    # Kept, not deleted, so their answers stay on the grids they filled in.
     seen = {roster_auth.person_key(person.id) for person in people}
     query = col.where(filter=FieldFilter("squadronId", "==", STARS_ORG_UNIT_ID))
-    departed = [doc.reference for doc in query.stream() if doc.id not in seen]
+    departed = [
+        doc.reference
+        for doc in query.stream()
+        if doc.id not in seen and (doc.to_dict() or {}).get("isActive", True)
+    ]
     for reference in departed:
-        reference.delete()
+        # Their name stays for old answers; their address and admin rights go.
+        reference.update(
+            {
+                "isActive": False,
+                "role": Role.MEMBER.value,
+                "email": firestore.DELETE_FIELD,
+            }
+        )
 
     print(f"Seeded {len(people)} people into {ROSTER_PEOPLE_COLLECTION}.")
-    print(f"Removed {len(departed)} who are no longer on the squadron.")
+    print(f"Marked {len(departed)} who left the squadron as inactive.")
     print("Now set role: admin on the three admins in the Firestore console.")
 
 

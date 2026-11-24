@@ -19,7 +19,7 @@ from app.config import (
 from app.services import api_keys, cloud_tasks
 from tests.conftest import ADMIN_EMAIL
 from tests.conftest import ADMIN_ID as PERSON_ID
-from tests.conftest import HEADERS, JOBS_KEY
+from tests.conftest import HEADERS, JOBS_KEY, MEMBER_ID, deactivate
 
 pytestmark = [
     pytest.mark.skipif(
@@ -92,6 +92,31 @@ def test_sign_in_flow(client, queued):
 
     assert client.post("/roster/auth/logout", headers=auth).status_code == 202
     assert client.get("/roster/auth/me", headers=auth).status_code == 401
+
+
+def test_a_leaver_is_signed_out_and_sent_no_code(client, queued, seed, member_auth):
+    """Leaving the squadron ends a live session and stops new codes."""
+    assert client.get("/roster/auth/me", headers=member_auth).status_code == 200
+
+    deactivate(seed, MEMBER_ID)
+
+    assert client.get("/roster/auth/me", headers=member_auth).status_code == 401
+    assert _request_code(client, MEMBER_ID).status_code == 202
+    assert not queued
+
+
+def test_a_code_sent_before_leaving_no_longer_signs_in(client, queued, seed):
+    """A code already in someone's inbox must not outlive their posting."""
+    nonce = _request_code(client).json()["nonce"]
+    deactivate(seed, PERSON_ID)
+
+    response = client.post(
+        "/roster/auth/verify-code",
+        headers=HEADERS,
+        json={"nonce": nonce, "code": _code_from(queued)},
+    )
+
+    assert response.status_code == 401
 
 
 def test_wrong_code_and_wrong_nonce_are_indistinguishable(client, queued):

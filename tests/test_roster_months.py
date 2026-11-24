@@ -301,7 +301,7 @@ def test_demoted_admin_loses_admin_straight_away(client, admin_auth, seed):
 
 
 def test_deleted_person_loses_their_session(client, admin_auth, seed):
-    """A leaver's row going means their live session stops working too."""
+    """A person's row deleted by hand means their live session stops working too."""
     seed.collection(ROSTER_PEOPLE_COLLECTION).document(
         f"{STARS_ORG_UNIT_ID}:{ADMIN_ID}"
     ).delete()

@@ -22,6 +22,7 @@ from tests.conftest import (
     HEADERS,
     MEMBER_ID,
     MEMBER_NAME,
+    deactivate,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -123,6 +124,55 @@ def test_grid_lists_everyone_even_before_anyone_answers(client):
     assert [row["name"] for row in body["rows"]] == [MEMBER_NAME, ADMIN_NAME]
     assert all(row["entries"] == {} for row in body["rows"])
     assert all(row["pending"] == {} for row in body["rows"])
+
+
+def test_a_leaver_who_answered_stays_on_the_grid_marked_inactive(
+    client, admin_auth, open_month
+):
+    """Their answers still matter to the month, but they are off the people list."""
+    _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y")
+    deactivate(open_month, MEMBER_ID)
+
+    row = _row(client, MEMBER_ID)
+    assert row["isActive"] is False
+    assert row["entries"][SATURDAY]["status"] == "Y"
+    people = client.get("/roster/people", headers=HEADERS).json()["people"]
+    assert [person["personId"] for person in people] == [ADMIN_ID]
+
+
+def test_a_leaver_who_never_answered_is_off_the_grid(client, admin_auth, open_month):
+    """Nothing of theirs is on the month, so they are not shown, nor written for."""
+    deactivate(open_month, MEMBER_ID)
+
+    response = client.get(f"/roster/months/{MONTH}/grid", headers=HEADERS)
+    assert [row["personId"] for row in response.json()["rows"]] == [ADMIN_ID]
+    assert _set(client, admin_auth, MEMBER_ID, SATURDAY, "Y").status_code == 404
+
+
+def test_a_leaver_who_answered_only_other_dates_is_off_the_grid(client, open_month):
+    """A leaver's answer elsewhere in the month does not put them on this grid."""
+    open_month.collection(ROSTER_AVAILABILITY_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:{MONTH}:{MEMBER_ID}"
+    ).set(
+        {
+            "squadronId": STARS_ORG_UNIT_ID,
+            "month": MONTH,
+            "personId": MEMBER_ID,
+            "entries": {
+                WEEKDAY: {
+                    "status": "Y",
+                    "updatedBy": MEMBER_ID,
+                    "updatedByName": MEMBER_NAME,
+                    "updatedAt": "2026-10-01T19:00:00+00:00",
+                }
+            },
+            "pending": {},
+        }
+    )
+    deactivate(open_month, MEMBER_ID)
+
+    response = client.get(f"/roster/months/{MONTH}/grid", headers=HEADERS)
+    assert [row["personId"] for row in response.json()["rows"]] == [ADMIN_ID]
 
 
 def test_grid_needs_a_key(client):

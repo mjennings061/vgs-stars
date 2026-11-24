@@ -58,23 +58,28 @@ def person_key(person_id: str) -> str:
 
 
 async def get_person(person_id: str) -> RosterPerson | None:
-    """Read a cached squadron member.
+    """Read a cached squadron member who has not left.
 
     Args:
         person_id: STARS person identifier.
 
     Returns:
-        The person, or None if they are not on the squadron.
+        The person, or None if they are not on the squadron or have left.
     """
     col = database.get_collection(ROSTER_PEOPLE_COLLECTION)
     snapshot = await col.document(person_key(person_id)).get()
     if not snapshot.exists:
         return None
-    return RosterPerson.model_validate(snapshot.to_dict())
+    person = RosterPerson.model_validate(snapshot.to_dict())
+    # Every sign-in step and session check comes through here, so a leaver is out.
+    return person if person.is_active else None
 
 
-async def list_people() -> list[RosterPerson]:
-    """Read every cached squadron member, in name order.
+async def list_people(include_inactive: bool = False) -> list[RosterPerson]:
+    """Read the cached squadron, in name order.
+
+    Args:
+        include_inactive: Also return people who have left, for old answers.
 
     Returns:
         The squadron, which is empty until the people cache is seeded.
@@ -85,7 +90,8 @@ async def list_people() -> list[RosterPerson]:
     people = [
         RosterPerson.model_validate(doc.to_dict()) async for doc in query.stream()
     ]
-    return sorted(people, key=lambda person: person.name)
+    kept = [person for person in people if person.is_active or include_inactive]
+    return sorted(kept, key=lambda person: person.name)
 
 
 async def _take_request_allowance(person_id: str, now: datetime) -> None:
