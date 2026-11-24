@@ -128,6 +128,9 @@ async def verify_session(
     # Role and name come from the person, so a demotion or rename bites at once.
     person = await roster_auth.get_person(session["personId"])
     if person is None:
+        logger.warning(
+            "Session refused for person %s, who has left", session["personId"]
+        )
         raise unauthorised
 
     # The route needs the plain token to delete exactly this session on logout.

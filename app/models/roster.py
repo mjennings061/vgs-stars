@@ -31,6 +31,8 @@ class RosterPerson(BaseModel):
     rank: str | None = None
     instruct_cat: str | None = None
     role: Role = Role.MEMBER
+    # Leavers are kept for their answers; a missing field means active.
+    is_active: bool = True
 
 
 class RosterCode(BaseModel):

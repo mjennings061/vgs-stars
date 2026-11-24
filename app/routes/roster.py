@@ -349,7 +349,7 @@ async def read_people() -> PeopleResponse:
     """List the squadron for the grid's rows.
 
     Returns:
-        Every cached person, without their email address.
+        Everyone still on the squadron, without their email address.
     """
     people = await roster_auth.list_people()
     return PeopleResponse(
@@ -543,6 +543,7 @@ class GridRow(BaseModel):
     person_id: str
     name: str
     instruct_cat: str | None = None
+    is_active: bool = True
     entries: dict[str, EntryResponse] = Field(default_factory=dict)
     pending: dict[str, PendingResponse] = Field(default_factory=dict)
 
@@ -681,7 +682,7 @@ async def grid_rows(
         The rows, by name, the dates that have frozen on any grid, and the
         notes keyed by date.
     """
-    people = await roster_auth.list_people()
+    people = await roster_auth.list_people(include_inactive=True)
     answers = await roster_availability.read_dates(
         dates, [person.person_id for person in people]
     )
@@ -690,11 +691,15 @@ async def grid_rows(
     rows = []
     for person in people:
         entries, pending = answers.get(person.person_id, ({}, {}))
+        # A leaver stays on a grid only where they answered one of its dates.
+        if not person.is_active and not (entries or pending):
+            continue
         rows.append(
             GridRow(
                 person_id=person.person_id,
                 name=person.name,
                 instruct_cat=person.instruct_cat,
+                is_active=person.is_active,
                 entries={
                     day: EntryResponse.model_validate(entry)
                     for day, entry in entries.items()
@@ -773,8 +778,8 @@ async def set_availability(
 
     Raises:
         HTTPException: 400 for a date on no month or course, 404 if the person
-            is unknown, 403 if the caller may not do this, 409 if the date
-            already has a pending change, 422 if a change after the freeze
+            is unknown or has left, 403 if the caller may not do this, 409 if the
+            date already has a pending change, 422 if a change after the freeze
             gives no reason.
     """
     lock = (await roster_courses.lock_dates([day])).get(day)
@@ -889,7 +894,8 @@ async def read_changes(state: ChangeState | None = None) -> ChangesResponse:
         The changes, newest first.
     """
     names = {
-        person.person_id: person.name for person in await roster_auth.list_people()
+        person.person_id: person.name
+        for person in await roster_auth.list_people(include_inactive=True)
     }
     return ChangesResponse(
         changes=[

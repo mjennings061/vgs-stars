@@ -144,6 +144,18 @@ def seed():
     return store
 
 
+def deactivate(store, person_id: str) -> None:
+    """Mark a test person as having left the squadron.
+
+    Args:
+        store: The synchronous Firestore client from ``seed``.
+        person_id: Who has left.
+    """
+    store.collection(ROSTER_PEOPLE_COLLECTION).document(
+        f"{STARS_ORG_UNIT_ID}:{person_id}"
+    ).update({"isActive": False})
+
+
 @pytest.fixture(autouse=True)
 def queued(mocker):
     """Record Cloud Tasks instead of creating them, so a test can replay one.

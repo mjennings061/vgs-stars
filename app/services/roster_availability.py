@@ -74,7 +74,7 @@ async def read_dates(
 
     Returns:
         Each person's answers and pending changes on those dates, keyed by
-        person id, missing anyone who has answered none of them.
+        person id. Anyone with a record for those months is in, even if empty.
     """
     wanted = {day.isoformat() for day in dates}
     months = sorted({roster_months.owner_month(day) for day in dates})
