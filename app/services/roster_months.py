@@ -36,6 +36,16 @@ def parse_month(month: str) -> date:
     return date.fromisoformat(f"{month}-01")
 
 
+def uk_today() -> date:
+    """Give today's date where the squadron flies.
+
+    Returns:
+        Today in the UK.
+    """
+    # Cloud Run runs in UTC, but the squadron and the freeze date are UK local.
+    return datetime.now(ZoneInfo(ROSTER_TIMEZONE)).date()
+
+
 def is_frozen(freeze_at: date) -> bool:
     """Say whether a month has frozen, against today in the UK.
 
@@ -45,8 +55,7 @@ def is_frozen(freeze_at: date) -> bool:
     Returns:
         True from the freeze date onwards.
     """
-    # Cloud Run runs in UTC, but the squadron and the freeze date are UK local.
-    return datetime.now(ZoneInfo(ROSTER_TIMEZONE)).date() >= freeze_at
+    return uk_today() >= freeze_at
 
 
 def owner_month(day: date) -> str:

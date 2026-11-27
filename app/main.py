@@ -11,7 +11,14 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import SCOPE_STARS, configure_logging
-from app.routes import auths, health, roster, roster_courses, unsubscribe
+from app.routes import (
+    auths,
+    health,
+    roster,
+    roster_courses,
+    roster_jobs,
+    unsubscribe,
+)
 from app.security import require_scope
 from app.services import database
 
@@ -113,6 +120,7 @@ app.include_router(auths.router)
 app.include_router(unsubscribe.router)
 app.include_router(roster.router)
 app.include_router(roster.tasks_router)
+app.include_router(roster_jobs.router)
 app.include_router(roster_courses.router)
 
 
